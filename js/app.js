@@ -1,4 +1,4 @@
-import { LEVELS, VOCAB, QUIZ, PHRASES, TUTOR_MODES } from "./data.js";
+import { LEVELS, VOCAB, QUIZ, PHRASES, TUTOR_MODES, LANG_META, PARTNER_UI } from "./data.js";
 
 /* =========================================================
    ที่เก็บข้อมูล (บันทึกในเครื่องผู้ใช้ด้วย localStorage)
@@ -69,24 +69,29 @@ function toast(msg) {
 let voices = [];
 function loadVoices() { voices = window.speechSynthesis ? speechSynthesis.getVoices() : []; }
 if (window.speechSynthesis) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
-function speak(text, rate = 0.95) {
+const ttsLang = (lang) => (LANG_META[lang] || LANG_META.en).tts;
+function speak(text, rate = 0.95, lang = "en") {
   if (!window.speechSynthesis) { toast("เบราว์เซอร์นี้ไม่รองรับการอ่านออกเสียง"); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "en-US";
+  const tag = ttsLang(lang);
+  u.lang = tag;
   u.rate = rate;
-  const v = voices.find((v) => v.lang === "en-US" && /Google|Samantha|Natural/i.test(v.name)) ||
-            voices.find((v) => v.lang && v.lang.startsWith("en"));
+  const norm2 = (x) => (x || "").replace("_", "-").toLowerCase();
+  const pre = tag.slice(0, 2).toLowerCase();
+  const v = voices.find((v) => norm2(v.lang) === tag.toLowerCase() && /Google|Samantha|Natural/i.test(v.name)) ||
+            voices.find((v) => norm2(v.lang) === tag.toLowerCase()) ||
+            voices.find((v) => norm2(v.lang).startsWith(pre));
   if (v) u.voice = v;
   speechSynthesis.speak(u);
 }
 
 /* ---------- ฟังเสียงพูด (Speech Recognition) ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-function listen({ onResult, onEnd, onError }) {
+function listen({ onResult, onEnd, onError, lang = "en" }) {
   if (!SR) { onError && onError("unsupported"); return null; }
   const r = new SR();
-  r.lang = "en-US";
+  r.lang = ttsLang(lang);
   r.interimResults = false;
   r.maxAlternatives = 3;
   r.onresult = (e) => {
@@ -104,7 +109,7 @@ function listen({ onResult, onEnd, onError }) {
    ========================================================= */
 let current = "home";
 let cleanup = null;
-const tabs = { home: renderHome, vocab: renderVocab, quiz: renderQuiz, speak: renderSpeak, tutor: renderTutor, profile: renderProfile };
+const tabs = { home: renderHome, vocab: renderVocab, quiz: renderQuiz, speak: renderSpeak, tutor: renderTutor, profile: renderProfile, translate: renderTranslate };
 
 function go(tab) {
   if (cleanup) { cleanup(); cleanup = null; }
@@ -112,7 +117,7 @@ function go(tab) {
   if (current === "tutor" && tab !== "tutor") summarizeChat();
   current = tab;
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === (tab === "profile" ? "home" : tab)));
-  $view.classList.remove("has-composer");
+  $view.classList.remove("has-composer", "tr-face");
   document.querySelector(".composer")?.remove();
   tabs[tab]();
   window.scrollTo(0, 0);
@@ -666,6 +671,34 @@ async function send(text) {
   }
 }
 
+/* ---------- เรียก AI ฝั่งเซิร์ฟเวอร์ (จัดการรหัสผ่านให้) ---------- */
+async function api(body, timeoutMs = 45000) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    let res, data;
+    try {
+      res = await fetch("/api/tutor", {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
+        body: JSON.stringify(body),
+      });
+      data = await res.json().catch(() => ({}));
+    } catch (e) {
+      throw new Error(e.name === "AbortError" ? "AI ไม่ตอบ ลองใหม่อีกครั้ง" : "เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ต");
+    } finally { clearTimeout(t); }
+    if (res.status === 401) {
+      const code = prompt("แอพนี้ตั้งรหัสผ่านสำหรับ AI ไว้ กรุณาใส่รหัส:");
+      if (!code) throw new Error("ต้องใส่รหัสผ่านก่อนใช้งาน");
+      S.passcode = code.trim(); save();
+      continue;
+    }
+    if (!res.ok) throw new Error(data.error || `เชื่อมต่อ AI ไม่สำเร็จ (รหัส ${res.status})`);
+    return data;
+  }
+  throw new Error("รหัสผ่านไม่ถูกต้อง");
+}
+
 /* ---------- ความจำของครู: สรุปจุดเด่น/จุดที่ผิดบ่อยหลังคุย ---------- */
 async function summarizeChat() {
   const c = chat;
@@ -730,6 +763,153 @@ function renderProfile() {
     if (confirm("ลบสิ่งที่ครู AI จำได้ทั้งหมด?")) { S.notes = ""; S.notesAt = 0; save(); renderProfile(); toast("ลบความจำแล้ว"); }
   });
 }
+
+/* =========================================================
+   7) แปลภาษา (คุยต่อหน้า / พิมพ์)
+   ========================================================= */
+let trLog = [];       // { from: "th"|partner, src, dst, reading }
+let trBusy = false;
+function renderTranslate() {
+  if (!S.partner) S.partner = "en";
+  if (!S.trMode) S.trMode = "face";
+  if (!S.saved) S.saved = [];
+  const P = S.partner, PM = LANG_META[P], PU = PARTNER_UI[P];
+  let rec = null;
+  cleanup = () => { try { rec && rec.abort(); } catch (e) {} };
+
+  const chips = Object.keys(PARTNER_UI).map((k) => `<button class="chip ${k === P ? "sel" : ""}" data-p="${k}">${LANG_META[k].flag} ${LANG_META[k].name}</button>`).join("");
+  const header = `
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">${chips}</div>
+    <div class="seg" style="margin-bottom:10px">
+      <button data-mode="face" class="${S.trMode === "face" ? "sel" : ""}">🗣️ คุยต่อหน้า</button>
+      <button data-mode="type" class="${S.trMode === "type" ? "sel" : ""}">⌨️ พิมพ์ / ประวัติ</button>
+    </div>`;
+
+  const line = (t, side) => {
+    // side "me" = ฝั่งคนไทย, "them" = ฝั่งคนต่างชาติ
+    const mineTurn = t.from === "th";
+    if (side === "them") {
+      const big = mineTurn ? t.dst : t.src;
+      return `<div class="tl ${mineTurn ? "in" : "out"}"><div class="big">${esc(big)}</div></div>`;
+    }
+    const big = mineTurn ? t.src : t.dst;
+    const sub = mineTurn ? `<div class="sub2">${esc(t.dst)}${t.reading ? ` <span class="muted">(${esc(t.reading)})</span>` : ""}</div>` : `<div class="sub2 muted">${esc(t.src)}</div>`;
+    return `<div class="tl ${mineTurn ? "out" : "in"}"><div class="big">${esc(big)}</div>${sub}</div>`;
+  };
+
+  if (S.trMode === "face") {
+    $view.classList.add("tr-face");
+    const last = trLog.slice(-3);
+    $view.innerHTML = header + `
+      <div class="face">
+        <div class="panel them">
+          <div class="lines">${last.length ? last.map((t) => line(t, "them")).join("") : `<div class="muted center">${esc(PU.hint)}</div>`}</div>
+          <button class="mic-sm" id="micThem">🎤 ${esc(PU.tap)}</button>
+        </div>
+        <div class="panel me">
+          <div class="lines">${last.length ? last.map((t) => line(t, "me")).join("") : `<div class="muted center">ให้อีกฝ่ายกดไมค์ฝั่งบน (จอกลับหัวให้เขาอ่าน) หรือคุณกดไมค์ด้านล่างแล้วพูดไทย</div>`}</div>
+          <div class="row">
+            <button class="mic-sm grow" id="micMe">🎤 กดแล้วพูดไทย</button>
+            <button class="icon-btn" id="toType" aria-label="พิมพ์">⌨️</button>
+          </div>
+        </div>
+      </div>
+      ${trBusy ? `<div class="tr-busy">กำลังแปล...</div>` : ""}`;
+    const bindMic = (id, lang) => {
+      const b = $view.querySelector(id);
+      b.addEventListener("click", () => {
+        if (!SR) { toast("ใช้ Chrome บน Android เพื่อใช้ไมค์"); return; }
+        if (trBusy) return;
+        if (rec) { rec.stop(); return; }
+        if (window.speechSynthesis) speechSynthesis.cancel();
+        b.classList.add("on");
+        rec = listen({
+          lang,
+          onResult: (alts) => doTranslate(alts[0], lang),
+          onError: (err) => toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : err === "language-not-supported" ? "เครื่องนี้ฟังภาษานี้ไม่ได้ ลองพิมพ์แทน" : "ไม่ได้ยินเสียง ลองใหม่"),
+          onEnd: () => { rec = null; b.classList.remove("on"); },
+        });
+      });
+    };
+    bindMic("#micThem", P);
+    bindMic("#micMe", "th");
+    $view.querySelector("#toType").addEventListener("click", () => { S.trMode = "type"; save(); renderTranslate(); });
+  } else {
+    $view.classList.add("has-composer");
+    $view.innerHTML = header + `
+      <div class="chat">
+        ${trLog.length ? trLog.map((t, i) => `
+          <div class="msg tr ${t.from === "th" ? "me" : "bot"}" style="max-width:92%">
+            <div class="small" style="opacity:.75">${esc(t.src)}</div>
+            <div style="font-size:18px;font-weight:600;margin-top:2px">${esc(t.dst)}</div>
+            ${t.reading ? `<div class="small" style="opacity:.8">${esc(t.reading)}</div>` : ""}
+            <div class="row" style="gap:4px;margin-top:4px">
+              <button class="say" data-i="${i}" data-act="say">🔊</button>
+              <button class="say" data-i="${i}" data-act="star">⭐</button>
+              <button class="say" data-i="${i}" data-act="copy">📋</button>
+            </div>
+          </div>`).join("") : `<div class="card empty"><div class="e">🌐</div><p class="muted">พิมพ์ภาษาไทยหรือ${PM.name} แล้วแอพจะแปลไปอีกฝั่งให้อัตโนมัติ</p></div>`}
+        ${trBusy ? `<div class="msg bot typing">กำลังแปล...</div>` : ""}
+      </div>
+      ${S.saved.length ? `<h2>⭐ ประโยคที่บันทึกไว้</h2><div class="card" style="padding:4px 16px">${S.saved.map((x, i) => `
+        <div class="row" style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <button class="say" data-si="${i}" data-act="ssay" style="font-size:18px">🔊</button>
+          <div class="grow"><b>${esc(x.text)}</b>${x.reading ? `<div class="small muted">${esc(x.reading)}</div>` : ""}<div class="small muted">${LANG_META[x.lang].flag} ${esc(x.th)}</div></div>
+          <button class="say" data-si="${i}" data-act="sdel" aria-label="ลบ">🗑️</button>
+        </div>`).join("")}</div>` : ""}`;
+    const items = (i) => trLog[+i];
+    $view.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
+      const act = b.dataset.act;
+      if (act === "say") { const t = items(b.dataset.i); speak(t.dst, 0.95, t.from === "th" ? P : "th"); }
+      if (act === "copy") { const t = items(b.dataset.i); navigator.clipboard?.writeText(t.dst).then(() => toast("คัดลอกแล้ว"), () => toast("คัดลอกไม่ได้")); }
+      if (act === "star") {
+        const t = items(b.dataset.i);
+        const fx = t.from === "th" ? { lang: P, text: t.dst, reading: t.reading, th: t.src } : { lang: P, text: t.src, reading: "", th: t.dst };
+        if (!S.saved.some((x) => x.text === fx.text)) { S.saved.unshift(fx); S.saved = S.saved.slice(0, 100); save(); toast("บันทึกประโยคแล้ว ⭐"); renderTranslate(); }
+        else toast("บันทึกไว้แล้ว");
+      }
+      if (act === "ssay") { const x = S.saved[+b.dataset.si]; speak(x.text, 0.9, x.lang); }
+      if (act === "sdel") { S.saved.splice(+b.dataset.si, 1); save(); renderTranslate(); }
+    }));
+    if (!document.querySelector(".composer")) {
+      const c = document.createElement("div");
+      c.className = "composer";
+      c.innerHTML = `<div class="inner">
+        <textarea id="trIn" rows="1" placeholder="พิมพ์ไทย หรือ ${PM.name}"></textarea>
+        <button class="icon-btn" id="trSend" aria-label="แปล" style="background:var(--brand);color:#fff;border-color:var(--brand)">➤</button>
+      </div>`;
+      document.body.appendChild(c);
+      const ta = c.querySelector("#trIn");
+      ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(120, ta.scrollHeight) + "px"; });
+      c.querySelector("#trSend").addEventListener("click", () => { const t = ta.value.trim(); if (!t || trBusy) return; ta.value = ""; ta.style.height = "auto"; doTranslate(t, null); });
+    }
+    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+  }
+
+  $view.querySelectorAll("[data-p]").forEach((b) => b.addEventListener("click", () => { S.partner = b.dataset.p; save(); trLog = []; go("translate"); }));
+  $view.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => { S.trMode = b.dataset.mode; save(); go("translate"); }));
+}
+
+async function doTranslate(text, from) {
+  const P = S.partner;
+  trBusy = true;
+  if (current === "translate") renderTranslateSoft();
+  try {
+    const d = await api({ action: "translate", text, partner: P, from: from || undefined });
+    const src = d.detected === "th" ? "th" : P;
+    trLog.push({ from: src, src: text, dst: d.translation, reading: d.reading });
+    trLog = trLog.slice(-50);
+    addXP(1);
+    trBusy = false;
+    if (current === "translate") { renderTranslateSoft(); speak(d.translation, 0.95, src === "th" ? P : "th"); }
+  } catch (e) {
+    trBusy = false;
+    toast(e.message);
+    if (current === "translate") renderTranslateSoft();
+  }
+}
+// วาดหน้าแปลใหม่โดยไม่ลบช่องพิมพ์ที่กำลังใช้
+function renderTranslateSoft() { if (cleanup) { cleanup(); cleanup = null; } renderTranslate(); }
 
 /* =========================================================
    เริ่มแอพ

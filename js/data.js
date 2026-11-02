@@ -190,3 +190,22 @@ export const TUTOR_MODES = [
   { id: "meeting", icon: "📊", name: "ซ้อมประชุม", desc: "ฝึกพูดในที่ประชุม", opener: "Good morning, everyone. Let's start. Could you give us a quick update on your project?" },
   { id: "restaurant", icon: "🍜", name: "สั่งอาหาร/ท่องเที่ยว", desc: "AI เป็นพนักงานร้าน", opener: "Hi, welcome! Table for how many?" },
 ];
+
+// ---------- ภาษา ----------
+export const LANG_META = {
+  th: { name: "ไทย", flag: "🇹🇭", tts: "th-TH" },
+  en: { name: "อังกฤษ", flag: "🇬🇧", tts: "en-US" },
+  ko: { name: "เกาหลี", flag: "🇰🇷", tts: "ko-KR" },
+  ja: { name: "ญี่ปุ่น", flag: "🇯🇵", tts: "ja-JP" },
+  zh: { name: "จีน", flag: "🇨🇳", tts: "zh-CN" },
+  vi: { name: "เวียดนาม", flag: "🇻🇳", tts: "vi-VN" },
+};
+
+// ข้อความบนฝั่งคนต่างชาติ (หน้าแปลแบบคุยต่อหน้า)
+export const PARTNER_UI = {
+  en: { tap: "Tap to speak", hint: "Tap the mic and speak English. It will be translated into Thai." },
+  ko: { tap: "눌러서 말하기", hint: "마이크를 누르고 한국어로 말하세요. 태국어로 번역됩니다." },
+  ja: { tap: "タップして話す", hint: "マイクを押して日本語で話してください。タイ語に翻訳されます。" },
+  zh: { tap: "点击说话", hint: "按下麦克风说中文，会翻译成泰语。" },
+  vi: { tap: "Nhấn để nói", hint: "Nhấn micro và nói tiếng Việt. Ứng dụng sẽ dịch sang tiếng Thái." },
+};
