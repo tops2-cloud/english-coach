@@ -235,3 +235,6 @@ h2 { font-size: 18px; margin: 20px 0 10px; }
 .empty { text-align: center; padding: 30px 16px; }
 .empty .e { font-size: 48px; }
 .field { width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 12px; }
+
+.profile-card { width: 100%; text-align: left; gap: 12px; }
+label.stack > * + * { margin-top: 6px; }

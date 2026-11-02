@@ -16,13 +16,16 @@ const defaultState = () => ({
   speak: { attempts: 0, sum: 0 },
   tutorMsgs: 0,
   passcode: "",
+  profile: { name: "", job: "", goal: "", interests: "" },
+  notes: "",            // สิ่งที่ครู AI จำได้เกี่ยวกับผู้เรียน (สรุปอัตโนมัติ)
+  notesAt: 0,
 });
 
 let S = load();
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...defaultState(), ...JSON.parse(raw) };
+    if (raw) { const d = defaultState(), o = JSON.parse(raw); return { ...d, ...o, profile: { ...d.profile, ...(o.profile || {}) } }; }
   } catch (e) {}
   return defaultState();
 }
@@ -101,13 +104,14 @@ function listen({ onResult, onEnd, onError }) {
    ========================================================= */
 let current = "home";
 let cleanup = null;
-const tabs = { home: renderHome, vocab: renderVocab, quiz: renderQuiz, speak: renderSpeak, tutor: renderTutor };
+const tabs = { home: renderHome, vocab: renderVocab, quiz: renderQuiz, speak: renderSpeak, tutor: renderTutor, profile: renderProfile };
 
 function go(tab) {
   if (cleanup) { cleanup(); cleanup = null; }
   if (window.speechSynthesis) speechSynthesis.cancel();
+  if (current === "tutor" && tab !== "tutor") summarizeChat();
   current = tab;
-  document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === (tab === "profile" ? "home" : tab)));
   $view.classList.remove("has-composer");
   document.querySelector(".composer")?.remove();
   tabs[tab]();
@@ -158,8 +162,14 @@ function renderHome() {
   }
   const max = Math.max(DAILY_GOAL, ...week.map((w) => w.xp));
 
+  const nm = S.profile.name;
   $view.innerHTML = `
-    <div class="card hero">
+    <button class="card row profile-card" id="toProfile">
+      <span style="font-size:28px">👤</span>
+      <span class="grow" style="text-align:left">${nm ? `<b>สวัสดี ${esc(nm)}</b><br><span class="muted small">แก้โปรไฟล์ / ดูสิ่งที่ครู AI จำได้</span>` : `<b>ตั้งโปรไฟล์ผู้เรียน</b><br><span class="muted small">ให้ครู AI รู้จักและจำจุดที่คุณผิดบ่อย</span>`}</span>
+      <span class="muted">›</span>
+    </button>
+    <div class="card hero" style="margin-top:12px">
       <div class="row">
         <div class="grow">
           <div class="small" style="opacity:.85">วันนี้ได้</div>
@@ -202,6 +212,7 @@ function renderHome() {
     </div>
   `;
   $view.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+  $view.querySelector("#toProfile").addEventListener("click", () => go("profile"));
   $view.querySelector("#reset").addEventListener("click", () => {
     if (confirm("ล้างความคืบหน้าทั้งหมดในเครื่องนี้? ย้อนกลับไม่ได้")) {
       const lvl = S.level; S = defaultState(); S.level = lvl; save(); go("home"); toast("ล้างข้อมูลแล้ว");
@@ -523,7 +534,7 @@ let chat = null; // { mode, messages: [{role, content}] }
 
 function renderTutor() {
   if (pendingTutor) {
-    chat = { mode: pendingTutor.mode, messages: [] };
+    chat = { mode: pendingTutor.mode, messages: [], summarizedAt: 0 };
     const text = pendingTutor.text; pendingTutor = null;
     drawChat();
     send(text);
@@ -533,15 +544,28 @@ function renderTutor() {
   $view.innerHTML = `
     <h1>ครู AI</h1>
     <p class="sub">เลือกสถานการณ์ที่อยากฝึก ครูจะตอบเป็นภาษาอังกฤษ และแก้จุดผิดพร้อมอธิบายเป็นภาษาไทย</p>
+    <button class="card row profile-card" id="toProfile" style="margin-bottom:12px">
+      <span style="font-size:24px">🧠</span>
+      <span class="grow" style="text-align:left"><b>${S.profile.name ? `ครูรู้จัก ${esc(S.profile.name)} แล้ว` : "ยังไม่ได้ตั้งโปรไฟล์"}</b><br><span class="muted small">${S.notes ? "ครูจำจุดที่คุณผิดบ่อยไว้แล้ว แตะเพื่อดู" : "แตะเพื่อตั้งโปรไฟล์ให้ครูรู้จักคุณ"}</span></span>
+      <span class="muted">›</span>
+    </button>
     <div class="modes">
       ${TUTOR_MODES.map((m) => `<button class="mode" data-m="${m.id}"><span class="mi">${m.icon}</span><span><b>${m.name}</b><br><span class="muted small">${m.desc}</span></span></button>`).join("")}
     </div>`;
+  $view.querySelector("#toProfile").addEventListener("click", () => go("profile"));
   $view.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => {
     const m = TUTOR_MODES.find((x) => x.id === b.dataset.m);
-    chat = { mode: m.id, messages: [{ role: "assistant", content: m.opener }] };
+    chat = newChat(m);
     drawChat();
-    speak(m.opener);
+    speak(chat.messages[0].content);
   }));
+}
+
+function newChat(m) {
+  let opener = m.opener;
+  const nm = S.profile.name.trim();
+  if (nm && m.id === "chat") opener = opener.replace(/^Hi!/, `Hi ${nm}!`);
+  return { mode: m.id, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
 }
 
 function splitReply(text) {
@@ -570,8 +594,8 @@ function drawChat() {
       ${chat.busy ? `<div class="msg bot typing">กำลังพิมพ์...</div>` : ""}
     </div>`;
   bindSay();
-  $view.querySelector("#back").addEventListener("click", () => { chat = null; go("tutor"); });
-  $view.querySelector("#newChat").addEventListener("click", () => { chat = { mode: m.id, messages: [{ role: "assistant", content: m.opener }] }; drawChat(); });
+  $view.querySelector("#back").addEventListener("click", () => { summarizeChat(); chat = null; go("tutor"); });
+  $view.querySelector("#newChat").addEventListener("click", () => { summarizeChat(); chat = newChat(m); drawChat(); });
 
   if (!document.querySelector(".composer")) {
     const c = document.createElement("div");
@@ -615,7 +639,7 @@ async function send(text) {
       method: "POST",
       signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
-      body: JSON.stringify({ mode: chat.mode, level: S.level, messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
+      body: JSON.stringify({ mode: chat.mode, level: S.level, profile: S.profile, notes: S.notes, messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
@@ -629,6 +653,8 @@ async function send(text) {
     if (!res.ok) throw new Error(data.error || `เชื่อมต่อครู AI ไม่สำเร็จ (รหัส ${res.status})`);
     chat.messages.push({ role: "assistant", content: data.reply });
     chat.busy = false;
+    const sinceSum = chat.messages.slice(chat.summarizedAt || 0).filter((m) => m.role === "user").length;
+    if (sinceSum >= 8) summarizeChat();
     if (current === "tutor") { drawChat(); speak(splitReply(data.reply).main); }
   } catch (e) {
     chat.busy = false;
@@ -638,6 +664,71 @@ async function send(text) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* ---------- ความจำของครู: สรุปจุดเด่น/จุดที่ผิดบ่อยหลังคุย ---------- */
+async function summarizeChat() {
+  const c = chat;
+  if (!c) return;
+  const fresh = c.messages.slice(c.summarizedAt || 0).filter((m) => !m.err);
+  if (fresh.filter((m) => m.role === "user").length < 2) return;
+  c.summarizedAt = c.messages.length;
+  try {
+    const res = await fetch("/api/tutor", {
+      method: "POST",
+      keepalive: true,
+      headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
+      body: JSON.stringify({ action: "summarize", level: S.level, profile: S.profile, notes: S.notes, messages: fresh.slice(-30).map(({ role, content }) => ({ role, content })) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && typeof data.notes === "string" && data.notes.trim()) {
+      S.notes = data.notes.trim(); S.notesAt = Date.now(); save();
+    }
+  } catch (e) { /* ไม่เป็นไร รอบหน้าค่อยสรุปใหม่ */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && current === "tutor") summarizeChat(); });
+
+/* =========================================================
+   6) โปรไฟล์ผู้เรียน
+   ========================================================= */
+function renderProfile() {
+  const p = S.profile;
+  const field = (k, label, ph) => `<label class="stack" style="display:block"><b class="small">${label}</b>
+    <input class="field" data-k="${k}" value="${esc(p[k] || "")}" placeholder="${ph}" maxlength="120" /></label>`;
+  $view.innerHTML = `
+    <div class="row" style="margin-bottom:8px">
+      <button class="icon-btn" id="back" aria-label="กลับ">←</button>
+      <h1 class="grow" style="margin:0">โปรไฟล์ผู้เรียน</h1>
+    </div>
+    <p class="sub">ครู AI จะใช้ข้อมูลนี้เพื่อคุยให้ตรงกับคุณ ไม่ต้องกรอกครบทุกช่องก็ได้</p>
+    <div class="card stack">
+      ${field("name", "ชื่อเล่น (ภาษาอังกฤษ)", "เช่น Top")}
+      ${field("job", "อาชีพ / สิ่งที่ทำ", "เช่น พนักงานขาย, นักศึกษา")}
+      ${field("goal", "อยากใช้ภาษาอังกฤษเพื่อ", "เช่น สัมภาษณ์งาน, เที่ยวญี่ปุ่น")}
+      ${field("interests", "เรื่องที่สนใจ", "เช่น ฟุตบอล, ทำอาหาร, เกม")}
+      <button class="btn primary block" id="saveP">บันทึกโปรไฟล์</button>
+    </div>
+
+    <h2>🧠 สิ่งที่ครู AI จำได้</h2>
+    <div class="card stack">
+      <p class="muted small" style="margin:0">ครูสรุปให้อัตโนมัติหลังคุยจบแต่ละครั้ง (จุดที่ผิดบ่อย จุดแข็ง เรื่องที่ชอบคุย) แก้ไขหรือลบได้</p>
+      <textarea class="field" id="notes" rows="7" maxlength="1500" placeholder="ยังไม่มี ลองคุยกับครู AI สักพัก แล้วกลับมาดูนะ">${esc(S.notes)}</textarea>
+      ${S.notesAt ? `<div class="muted small">อัปเดตล่าสุด ${new Date(S.notesAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>` : ""}
+      <div class="row">
+        <button class="btn grow" id="clearN">ลบความจำ</button>
+        <button class="btn primary grow" id="saveN">บันทึก</button>
+      </div>
+    </div>
+    <p class="muted small center" style="margin-top:16px">ข้อมูลทั้งหมดเก็บไว้ในเครื่องนี้เท่านั้น และจะส่งไปให้ AI ตอนคุยกับครูเท่านั้น<br>ไม่ควรกรอกข้อมูลส่วนตัวที่ละเอียดอ่อน</p>`;
+  $view.querySelector("#back").addEventListener("click", () => go("home"));
+  $view.querySelector("#saveP").addEventListener("click", () => {
+    $view.querySelectorAll("[data-k]").forEach((i) => { S.profile[i.dataset.k] = i.value.trim(); });
+    save(); toast("บันทึกโปรไฟล์แล้ว");
+  });
+  $view.querySelector("#saveN").addEventListener("click", () => { S.notes = $view.querySelector("#notes").value.trim(); S.notesAt = Date.now(); save(); toast("บันทึกแล้ว"); });
+  $view.querySelector("#clearN").addEventListener("click", () => {
+    if (confirm("ลบสิ่งที่ครู AI จำได้ทั้งหมด?")) { S.notes = ""; S.notesAt = 0; save(); renderProfile(); toast("ลบความจำแล้ว"); }
+  });
 }
 
 /* =========================================================
