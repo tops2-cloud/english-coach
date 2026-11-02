@@ -1,9 +1,13 @@
 // Vercel Serverless Function: /api/tutor
 // ส่งข้อความไปหา Claude แล้วส่งคำตอบกลับให้แอพ
-// ต้องตั้งค่า Environment Variable ใน Vercel:
-//   ANTHROPIC_API_KEY  (จำเป็น)  คีย์จาก console.anthropic.com
-//   ANTHROPIC_MODEL    (ไม่บังคับ) ค่าเริ่มต้น claude-haiku-5-5
-//   APP_PASSCODE       (ไม่บังคับ) ถ้าตั้งไว้ ผู้ใช้ต้องใส่รหัสนี้ก่อนคุยกับครู AI
+// รองรับ 2 ผู้ให้บริการ ใส่คีย์อย่างใดอย่างหนึ่ง (หรือทั้งคู่) ใน Vercel → Settings → Environment Variables:
+//   GEMINI_API_KEY     คีย์ฟรีจาก aistudio.google.com (Google Gemini)
+//   ANTHROPIC_API_KEY  คีย์แบบเติมเงินจาก console.anthropic.com (Claude)
+// ตัวเลือกเพิ่มเติม (ไม่บังคับ):
+//   AI_PROVIDER        "gemini" หรือ "claude" ถ้ามีทั้งสองคีย์ (ค่าเริ่มต้น: ใช้ Claude ถ้ามีคีย์ ไม่งั้นใช้ Gemini)
+//   GEMINI_MODEL       ค่าเริ่มต้น gemini-flash-latest
+//   ANTHROPIC_MODEL    ค่าเริ่มต้น claude-haiku-5-5
+//   APP_PASSCODE       ถ้าตั้งไว้ ผู้ใช้ต้องใส่รหัสนี้ก่อนคุยกับครู AI
 
 const LEVEL_TEXT = {
   beginner: "The learner is a Thai adult beginner (about CEFR A1–A2). Use short, simple sentences and common words.",
@@ -49,6 +53,69 @@ function normalize(messages) {
   return out;
 }
 
+function pickProvider() {
+  const hasClaude = !!process.env.ANTHROPIC_API_KEY;
+  const hasGemini = !!process.env.GEMINI_API_KEY;
+  const want = (process.env.AI_PROVIDER || "").toLowerCase();
+  if (want === "gemini" && hasGemini) return "gemini";
+  if (want === "claude" && hasClaude) return "claude";
+  if (hasClaude) return "claude";
+  if (hasGemini) return "gemini";
+  return null;
+}
+
+async function askClaude(system, msgs) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: process.env.ANTHROPIC_MODEL || "claude-haiku-5-5",
+      max_tokens: 500,
+      system,
+      messages: msgs,
+    }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data?.error?.message || `HTTP ${r.status}`);
+  return (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
+}
+
+async function geminiCall(model, system, msgs) {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: msgs.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+      generationConfig: { maxOutputTokens: 2048, temperature: 0.7 },
+    }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error(data?.error?.message || `HTTP ${r.status}`);
+    err.status = r.status;
+    throw err;
+  }
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  return parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("").trim();
+}
+
+async function askGemini(system, msgs) {
+  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  try {
+    return await geminiCall(model, system, msgs);
+  } catch (e) {
+    if (e.status === 429) throw new Error("ใช้ครู AI ครบโควตาฟรีของ Gemini แล้ว รอสักครู่หรือพรุ่งนี้แล้วลองใหม่");
+    // ถ้ารุ่นที่ตั้งไว้ใช้ไม่ได้ ลองรุ่นสำรอง
+    if (!process.env.GEMINI_MODEL && (e.status === 404 || e.status === 400)) return geminiCall("gemini-3.5-flash-lite", system, msgs);
+    throw e;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -60,9 +127,9 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "รหัสผ่านไม่ถูกต้อง" });
   }
 
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
-    return res.status(500).json({ error: "ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY ใน Vercel (Settings → Environment Variables) แล้ว Redeploy" });
+  const provider = pickProvider();
+  if (!provider) {
+    return res.status(500).json({ error: "ครู AI ยังไม่เปิดใช้งาน: ใส่ GEMINI_API_KEY (ฟรี) หรือ ANTHROPIC_API_KEY ใน Vercel → Settings → Environment Variables แล้ว Redeploy" });
   }
 
   let body = req.body;
@@ -74,28 +141,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || "claude-haiku-5-5",
-        max_tokens: 500,
-        system: systemPrompt(mode, level),
-        messages: msgs,
-      }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      const msg = data?.error?.message || `HTTP ${r.status}`;
-      return res.status(502).json({ error: "ครู AI ตอบไม่ได้ตอนนี้: " + msg });
-    }
-    const reply = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
-    return res.status(200).json({ reply: reply || "Sorry, could you say that again?" });
+    const system = systemPrompt(mode, level);
+    const reply = provider === "claude" ? await askClaude(system, msgs) : await askGemini(system, msgs);
+    return res.status(200).json({ reply: reply || "Sorry, could you say that again?", provider });
   } catch (e) {
-    return res.status(502).json({ error: "เชื่อมต่อครู AI ไม่สำเร็จ ลองใหม่อีกครั้ง" });
+    return res.status(502).json({ error: "ครู AI ตอบไม่ได้ตอนนี้: " + (e.message || "เชื่อมต่อไม่สำเร็จ") });
   }
 }

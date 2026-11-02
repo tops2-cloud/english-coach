@@ -18,13 +18,25 @@
 
 1. ที่ vercel.com กด **Add New → Project** แล้วเลือก repo `english-coach`
 2. Framework Preset เลือก **Other** ไม่ต้องตั้งค่า build แล้วกด **Deploy**
-3. ไปที่ **Settings → Environment Variables** แล้วเพิ่ม:
-   - `ANTHROPIC_API_KEY` = คีย์จาก [console.anthropic.com](https://console.anthropic.com) (จำเป็นสำหรับครู AI)
-   - `APP_PASSCODE` = รหัสอะไรก็ได้ (ไม่บังคับ แต่แนะนำ กันคนอื่นใช้ครู AI แล้วเสียค่า API ของคุณ)
-   - `ANTHROPIC_MODEL` = รุ่นโมเดล (ไม่บังคับ ค่าเริ่มต้น `claude-haiku-5-5` ซึ่งถูกและเร็ว)
-4. ไปที่ **Deployments** กด ⋯ ที่อันล่าสุด → **Redeploy** เพื่อให้ค่าใหม่มีผล
-
 ส่วนคำศัพท์ ควิซ และฟัง-พูด ใช้ได้ทันทีโดยไม่ต้องมีคีย์
+
+## เปิดใช้ครู AI (ใส่คีย์ทีหลังได้)
+
+ใส่คีย์ **อย่างใดอย่างหนึ่ง** หรือทั้งคู่ ที่ Vercel → **Settings → Environment Variables**
+
+| Key | ได้มาจาก | ค่าใช้จ่าย |
+|---|---|---|
+| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) → Get API key | ฟรี (มีโควตาจำกัดต่อนาที/ต่อวัน) |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → API Keys | เติมเงินล่วงหน้า |
+| `APP_PASSCODE` | ตั้งเองได้เลย เช่น `coach2026` | แนะนำให้ตั้ง กันคนอื่นใช้ครู AI |
+
+- มีคีย์เดียว → ใช้ตัวนั้น
+- มีทั้งสองคีย์ → ใช้ Claude เป็นหลัก ถ้าอยากใช้ Gemini ให้เพิ่ม `AI_PROVIDER` = `gemini`
+- ตัวเลือกเสริม: `GEMINI_MODEL` (ค่าเริ่มต้น `gemini-flash-latest`), `ANTHROPIC_MODEL` (ค่าเริ่มต้น `claude-haiku-5-5`)
+
+เพิ่มหรือเปลี่ยนค่าแล้ว ต้องไปที่ **Deployments** กด ⋯ ที่อันล่าสุด → **Redeploy** ทุกครั้ง
+
+> Gemini แบบฟรี: ข้อความที่ส่งอาจถูก Google นำไปใช้ปรับปรุงบริการ อย่าพิมพ์ข้อมูลส่วนตัวในแชตครู AI
 
 ## โครงสร้างไฟล์
 
