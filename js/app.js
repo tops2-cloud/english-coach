@@ -1,4 +1,7 @@
 import { LEVELS, VOCAB, QUIZ, PHRASES, TUTOR_MODES, LANG_META, PARTNER_UI } from "./data.js";
+import { LANG_CONTENT } from "./data-langs.js";
+
+const LEARN_LANGS = ["en", "ko", "ja", "zh", "vi"];
 
 /* =========================================================
    ที่เก็บข้อมูล (บันทึกในเครื่องผู้ใช้ด้วย localStorage)
@@ -17,11 +20,32 @@ const defaultState = () => ({
   tutorMsgs: 0,
   passcode: "",
   profile: { name: "", job: "", goal: "", interests: "" },
-  notes: "",            // สิ่งที่ครู AI จำได้เกี่ยวกับผู้เรียน (สรุปอัตโนมัติ)
-  notesAt: 0,
+  notes: "",            // (เวอร์ชันเก่า) ย้ายไป notesBy.en
+  notesBy: {},          // lang -> สิ่งที่ครู AI จำได้เกี่ยวกับผู้เรียน (สรุปอัตโนมัติ)
+  notesAtBy: {},
+  lang: "en",           // ภาษาที่กำลังเรียน
 });
 
 let S = load();
+if (S.notes && !S.notesBy.en) { S.notesBy.en = S.notes; S.notesAtBy.en = S.notesAt || Date.now(); S.notes = ""; }
+if (!LEARN_LANGS.includes(S.lang)) S.lang = "en";
+const getNotes = (l = S.lang) => S.notesBy[l] || "";
+const setNotes = (l, t) => { S.notesBy[l] = t; S.notesAtBy[l] = t ? Date.now() : 0; save(); };
+
+/* ---------- ชุดบทเรียน (deck): อังกฤษแยกตามระดับ ภาษาอื่นใช้ชื่อภาษา ---------- */
+const deck = () => (S.lang === "en" ? S.level : S.lang);
+const deckLang = (d) => (LEVELS[d] ? "en" : d);
+const deckLabel = (d = deck()) => LEVELS[d] ? `${LANG_META.en.flag} อังกฤษ · ${LEVELS[d].name}` : `${LANG_META[d].flag} ${LANG_META[d].name}`;
+const _vc = {};
+function deckVocab(d) {
+  if (_vc[d]) return _vc[d];
+  return (_vc[d] = LEVELS[d]
+    ? VOCAB[d].map((x) => ({ w: x.en, r: "", pos: x.pos, th: x.th, ex: x.ex, exR: "", exTh: x.exTh }))
+    : LANG_CONTENT[d].vocab.map((x) => ({ ...x, pos: "" })));
+}
+const deckQuiz = (d) => (LEVELS[d] ? QUIZ[d] : LANG_CONTENT[d].quiz);
+const deckPhrases = (d) => (LEVELS[d] ? PHRASES[d].map((x) => ({ t: x.en, r: "", th: x.th })) : LANG_CONTENT[d].phrases);
+const hasThai = (t) => /[\u0E00-\u0E7F]/.test(t);
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -126,22 +150,30 @@ function go(tab) {
 document.querySelectorAll(".tabbar button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
 
 function renderLevelChip() {
-  document.getElementById("levelBtn").textContent = LEVELS[S.level].name;
+  document.getElementById("levelBtn").textContent = S.lang === "en" ? `${LANG_META.en.flag} ${LEVELS[S.level].name}` : `${LANG_META[S.lang].flag} ${LANG_META[S.lang].name}`;
 }
 document.getElementById("levelBtn").addEventListener("click", () => {
   const bg = document.createElement("div");
   bg.className = "sheet-bg";
-  bg.innerHTML = `<div class="sheet stack">
-    <h2>เลือกระดับ</h2>
-    ${Object.entries(LEVELS).map(([k, v]) => `
-      <button class="opt ${k === S.level ? "sel" : ""}" data-l="${k}">
-        <span style="font-size:26px">${k === "beginner" ? "🌱" : "💼"}</span>
-        <span><b>${v.name}</b><br><span class="muted small">${v.desc}</span></span>
+  const opts = [
+    ...Object.entries(LEVELS).map(([k, v]) => ({ lang: "en", level: k, icon: LANG_META.en.flag, name: `อังกฤษ · ${v.name}`, desc: v.desc })),
+    ...LEARN_LANGS.filter((l) => l !== "en").map((l) => ({ lang: l, level: "", icon: LANG_META[l].flag, name: LANG_META[l].name, desc: "ผู้เริ่มต้น · ชีวิตประจำวันและท่องเที่ยว" })),
+  ];
+  bg.innerHTML = `<div class="sheet stack" style="max-height:85dvh;overflow-y:auto">
+    <h2>เลือกภาษาที่จะเรียน</h2>
+    ${opts.map((o, i) => `
+      <button class="opt ${o.lang === S.lang && (o.lang !== "en" || o.level === S.level) ? "sel" : ""}" data-o="${i}">
+        <span style="font-size:26px">${o.icon}</span>
+        <span><b>${o.name}</b><br><span class="muted small">${o.desc}</span></span>
       </button>`).join("")}
   </div>`;
   bg.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-l]");
-    if (b) { S.level = b.dataset.l; save(); renderLevelChip(); go(current); }
+    const b = e.target.closest("[data-o]");
+    if (b) {
+      const o = opts[+b.dataset.o];
+      if (chat && chat.lang !== o.lang) { summarizeChat(); chat = null; }
+      S.lang = o.lang; if (o.level) S.level = o.level; save(); renderLevelChip(); go(current);
+    }
     if (b || e.target === bg) bg.remove();
   });
   document.body.appendChild(bg);
@@ -156,7 +188,7 @@ function renderHome() {
   const allCards = Object.values(S.cards);
   const learned = allCards.filter((c) => c.reps > 0).length;
   const mastered = allCards.filter((c) => c.interval >= 21).length;
-  const due = dueCards(S.level).length;
+  const due = dueCards(deck()).length;
   const acc = S.quiz.total ? Math.round((S.quiz.correct / S.quiz.total) * 100) : 0;
   const spk = S.speak.attempts ? Math.round(S.speak.sum / S.speak.attempts) : 0;
 
@@ -189,10 +221,10 @@ function renderHome() {
       <div class="small" style="margin-top:8px;opacity:.9">${pct >= 100 ? "ครบเป้าวันนี้แล้ว เก่งมาก! 🎉" : `อีก ${DAILY_GOAL - xpToday} XP จะครบเป้าวันนี้`}</div>
     </div>
 
-    <h2>เริ่มเรียนเลย</h2>
+    <h2>เริ่มเรียนเลย · <span class="muted" style="font-weight:500">${deckLabel()}</span></h2>
     <div class="quick">
       <button data-go="vocab"><div class="qi">🃏</div><b>ทบทวนคำศัพท์</b><small>${due ? `ถึงรอบ ${due} คำ` : "ไม่มีคำค้าง"}</small></button>
-      <button data-go="quiz"><div class="qi">✅</div><b>ควิซไวยากรณ์</b><small>ข้อละ +5 XP</small></button>
+      <button data-go="quiz"><div class="qi">✅</div><b>ควิซ</b><small>ข้อละ +5 XP</small></button>
       <button data-go="speak"><div class="qi">🎤</div><b>ฝึกฟัง-พูด</b><small>ตรวจการออกเสียง</small></button>
       <button data-go="tutor"><div class="qi">🤖</div><b>คุยกับครู AI</b><small>ฝึกสนทนาจริง</small></button>
     </div>
@@ -220,7 +252,7 @@ function renderHome() {
   $view.querySelector("#toProfile").addEventListener("click", () => go("profile"));
   $view.querySelector("#reset").addEventListener("click", () => {
     if (confirm("ล้างความคืบหน้าทั้งหมดในเครื่องนี้? ย้อนกลับไม่ได้")) {
-      const lvl = S.level; S = defaultState(); S.level = lvl; save(); go("home"); toast("ล้างข้อมูลแล้ว");
+      const lvl = S.level, lng = S.lang, pc = S.passcode, pf = S.profile; S = defaultState(); S.level = lvl; S.lang = lng; S.passcode = pc; S.profile = pf; save(); go("home"); toast("ล้างข้อมูลการเรียนแล้ว");
     }
   });
 }
@@ -228,17 +260,17 @@ function renderHome() {
 /* =========================================================
    2) แฟลชการ์ด + ระบบทบทวนตามรอบ (Spaced Repetition)
    ========================================================= */
-const cardId = (level, w) => level + ":" + w.en;
+const cardId = (d, w) => d + ":" + w.w;
 const DAY = 86400000;
 
 function dueCards(level) {
   const now = Date.now();
-  return VOCAB[level].filter((w) => { const c = S.cards[cardId(level, w)]; return c && c.due <= now; });
+  return deckVocab(level).filter((w) => { const c = S.cards[cardId(level, w)]; return c && c.due <= now; });
 }
 function newCards(level) {
   const used = S.newSeen[today() + "|" + level] || 0;
   const left = Math.max(0, NEW_PER_DAY - used);
-  return VOCAB[level].filter((w) => !S.cards[cardId(level, w)]).slice(0, left);
+  return deckVocab(level).filter((w) => !S.cards[cardId(level, w)]).slice(0, left);
 }
 
 // grade: 0 = จำไม่ได้, 1 = ยาก, 2 = ได้, 3 = ง่าย (แบบย่อของ SM-2)
@@ -271,28 +303,28 @@ function preview(level, w, grade) {
 }
 
 function renderVocab() {
-  const level = S.level;
+  const level = deck(), L = deckLang(level);
   let queue = shuffle([...dueCards(level), ...newCards(level)]);
   const total = queue.length;
   let done = 0;
   let flipped = false;
 
   if (!total) {
-    const learned = VOCAB[level].filter((w) => S.cards[cardId(level, w)]).length;
+    const learned = deckVocab(level).filter((w) => S.cards[cardId(level, w)]).length;
     const next = Object.entries(S.cards).filter(([k]) => k.startsWith(level + ":")).map(([, c]) => c.due).sort((a, b) => a - b)[0];
     $view.innerHTML = `
-      <h1>คำศัพท์ · ${LEVELS[level].name}</h1>
+      <h1>คำศัพท์ · ${deckLabel(level)}</h1>
       <div class="card empty">
         <div class="e">🎉</div>
         <h2>ทบทวนครบแล้วสำหรับตอนนี้</h2>
-        <p class="muted">เรียนไปแล้ว ${learned}/${VOCAB[level].length} คำ${next ? ` · รอบถัดไป ${new Date(next).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}` : ""}</p>
+        <p class="muted">เรียนไปแล้ว ${learned}/${deckVocab(level).length} คำ${next ? ` · รอบถัดไป ${new Date(next).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}` : ""}</p>
         <button class="btn primary" id="more">เรียนคำใหม่เพิ่มอีก 5 คำ</button>
       </div>
       ${wordList(level)}`;
     $view.querySelector("#more").addEventListener("click", () => {
       const k = today() + "|" + level;
       S.newSeen[k] = Math.max(0, (S.newSeen[k] || 0) - 5); save();
-      if (!newCards(level).length) toast("เรียนครบทุกคำในระดับนี้แล้ว ลองเปลี่ยนระดับดู");
+      if (!newCards(level).length) toast("เรียนครบทุกคำในชุดนี้แล้ว ลองเปลี่ยนภาษาหรือระดับดู");
       else renderVocab();
     });
     bindSay();
@@ -312,12 +344,14 @@ function renderVocab() {
       <div class="card flash" id="flash">
         <button class="icon-btn speak" id="sayWord" aria-label="ฟังเสียง">🔊</button>
         ${isNew ? `<span class="pill" style="margin-bottom:10px">คำใหม่</span>` : ""}
-        <div class="word">${esc(w.en)}</div>
-        <div class="pos">${esc(w.pos)}</div>
+        <div class="word">${esc(w.w)}</div>
+        ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
+        ${w.pos ? `<div class="pos">${esc(w.pos)}</div>` : ""}
         <div id="back" hidden style="width:100%">
           <div class="meaning">${esc(w.th)}</div>
           <div class="ex">
-            <div class="en">${esc(w.ex)} <button class="say" data-say="${esc(w.ex)}" style="border:0;background:none">🔊</button></div>
+            <div class="en">${esc(w.ex)} <button class="say" data-say="${esc(w.ex)}" data-lang="${L}">🔊</button></div>
+            ${w.exR ? `<div class="reading small">${esc(w.exR)}</div>` : ""}
             <div class="muted small">${esc(w.exTh)}</div>
           </div>
         </div>
@@ -346,45 +380,47 @@ function renderVocab() {
     };
     $view.querySelector("#flash").addEventListener("click", (e) => { if (!e.target.closest("button")) flip(); });
     $view.querySelector("#show").addEventListener("click", flip);
-    $view.querySelector("#sayWord").addEventListener("click", () => speak(w.en, 0.85));
+    $view.querySelector("#sayWord").addEventListener("click", () => speak(w.w, 0.85, L));
     bindSay();
-    speak(w.en, 0.85);
+    speak(w.w, 0.85, L);
   }
   draw();
 }
 function wordList(level) {
-  return `<h2>คำทั้งหมดในระดับนี้</h2>
+  const L = deckLang(level);
+  return `<h2>คำทั้งหมดในชุดนี้</h2>
     <div class="card" style="padding:4px 16px">
-      ${VOCAB[level].map((w) => {
+      ${deckVocab(level).map((w) => {
         const c = S.cards[cardId(level, w)];
         const tag = !c ? `<span class="pill">ยังไม่เรียน</span>` : c.interval >= 21 ? `<span class="pill" style="color:var(--good)">จำแม่น</span>` : `<span class="pill" style="color:var(--brand)">กำลังเรียน</span>`;
         return `<div class="row" style="padding:10px 0;border-bottom:1px solid var(--line)">
-          <button class="say" data-say="${esc(w.en)}" style="border:0;background:none;font-size:18px">🔊</button>
-          <div class="grow"><b>${esc(w.en)}</b> <span class="muted small">${esc(w.th)}</span></div>${tag}</div>`;
+          <button class="say" data-say="${esc(w.w)}" data-lang="${L}" style="font-size:18px">🔊</button>
+          <div class="grow"><b>${esc(w.w)}</b>${w.r ? ` <span class="small reading">${esc(w.r)}</span>` : ""} <span class="muted small">${esc(w.th)}</span></div>${tag}</div>`;
       }).join("")}
     </div>`;
 }
 function bindSay() {
-  $view.querySelectorAll("[data-say]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); speak(b.dataset.say); }));
+  $view.querySelectorAll("[data-say]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); speak(b.dataset.say, 0.95, b.dataset.lang || deckLang(deck())); }));
 }
 
 /* =========================================================
    3) ควิซไวยากรณ์
    ========================================================= */
 function renderQuiz() {
-  const level = S.level;
+  const level = deck();
   $view.innerHTML = `
-    <h1>ควิซ · ${LEVELS[level].name}</h1>
+    <h1>ควิซ · ${deckLabel(level)}</h1>
     <p class="sub">เลือกคำตอบที่ถูก มีคำอธิบายภาษาไทยทุกข้อ</p>
     <div class="stack">
       <button class="btn primary block" data-n="10">เริ่มควิซ 10 ข้อ</button>
       <button class="btn block" data-n="5">ควิซสั้น 5 ข้อ</button>
-      <button class="btn block" data-n="${QUIZ[level].length}">ทำทั้งหมด (${QUIZ[level].length} ข้อ)</button>
+      <button class="btn block" data-n="${deckQuiz(level).length}">ทำทั้งหมด (${deckQuiz(level).length} ข้อ)</button>
     </div>`;
   $view.querySelectorAll("[data-n]").forEach((b) => b.addEventListener("click", () => runQuiz(level, +b.dataset.n)));
 }
 function runQuiz(level, n) {
-  const qs = shuffle(QUIZ[level]).slice(0, n).map((q) => {
+  const L = deckLang(level);
+  const qs = shuffle(deckQuiz(level)).slice(0, n).map((q) => {
     const order = shuffle(q.c.map((_, i) => i));
     return { ...q, c: order.map((i) => q.c[i]), a: order.indexOf(q.a) };
   });
@@ -415,10 +451,11 @@ function runQuiz(level, n) {
       if (!ok) { b.classList.add("wrong"); wrong.push(q); }
       else { score++; addXP(5); }
       S.quiz.total++; if (ok) S.quiz.correct++; save();
-      const full = q.q.replace("___", q.c[q.a]);
+      const full = L === "en" ? q.q.replace("___", q.c[q.a]) : q.c[q.a];
+      const sayable = !hasThai(full);
       $view.querySelector("#after").innerHTML = `
         <div class="explain"><b>${ok ? "✅ ถูกต้อง!" : "❌ ยังไม่ถูก"}</b><br>${esc(q.why)}
-          <div style="margin-top:6px"><button class="say" data-say="${esc(full)}" style="border:0;background:none;padding:0">🔊</button> <i>${esc(full)}</i></div>
+          ${sayable ? `<div style="margin-top:6px"><button class="say" data-say="${esc(full)}" data-lang="${L}" style="padding:0">🔊</button> <i>${esc(full)}</i></div>` : ""}
         </div>
         <button class="btn primary block" id="next" style="margin-top:12px">${i + 1 < qs.length ? "ข้อต่อไป" : "ดูผล"}</button>`;
       bindSay();
@@ -434,15 +471,15 @@ function runQuiz(level, n) {
         <p class="muted">${pct >= 80 ? "ยอดเยี่ยม!" : pct >= 50 ? "ดีแล้ว ฝึกอีกนิด" : "ไม่เป็นไร ลองอีกรอบนะ"} · ได้ ${score * 5} XP</p>
       </div>
       ${wrong.length ? `<h2>ข้อที่ควรทบทวน</h2><div class="stack">${wrong.map((q) => `
-        <div class="card"><div><b>${esc(q.q.replace("___", q.c[q.a]))}</b></div><div class="muted small">${esc(q.why)}</div></div>`).join("")}</div>` : ""}
+        <div class="card"><div><b>${esc(L === "en" ? q.q.replace("___", q.c[q.a]) : q.q + " → " + q.c[q.a])}</b></div><div class="muted small">${esc(q.why)}</div></div>`).join("")}</div>` : ""}
       <div class="stack" style="margin-top:16px">
         <button class="btn primary block" id="again">ทำควิซอีกรอบ</button>
         ${wrong.length ? `<button class="btn block" id="tutor">ให้ครู AI อธิบายเพิ่ม</button>` : ""}
       </div>`;
     $view.querySelector("#again").addEventListener("click", () => runQuiz(level, n));
     $view.querySelector("#tutor")?.addEventListener("click", () => {
-      const list = wrong.map((q) => `- ${q.q.replace("___", q.c[q.a])}`).join("\n");
-      pendingTutor = { mode: "correct", text: `ช่วยอธิบายไวยากรณ์ในประโยคเหล่านี้เป็นภาษาไทย พร้อมยกตัวอย่างเพิ่ม:\n${list}` };
+      const list = wrong.map((q) => `- ${L === "en" ? q.q.replace("___", q.c[q.a]) : q.q + " → " + q.c[q.a]}`).join("\n");
+      pendingTutor = { mode: "correct", text: `ช่วยอธิบายเรื่องในข้อเหล่านี้เป็นภาษาไทย พร้อมยกตัวอย่างเพิ่ม:\n${list}` };
       go("tutor");
     });
   }
@@ -452,9 +489,15 @@ function runQuiz(level, n) {
 /* =========================================================
    4) ฝึกฟังและพูด
    ========================================================= */
-const norm = (s) => s.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").split(/\s+/).filter(Boolean);
-function compare(target, said) {
-  const t = norm(target), s = norm(said);
+const CHAR_LANGS = ["ko", "ja", "zh"];
+// แยกเป็นหน่วยเทียบ: ภาษาที่ไม่เว้นวรรค (เกาหลี ญี่ปุ่น จีน) เทียบทีละตัวอักษร ที่เหลือเทียบทีละคำ
+function units(s, lang) {
+  const clean = s.normalize("NFC").toLowerCase().replace(/[’']/g, "'");
+  if (CHAR_LANGS.includes(lang)) return Array.from(clean.replace(/[^\p{L}\p{N}]/gu, ""));
+  return clean.replace(/[^\p{L}\p{N}' ]/gu, " ").split(/\s+/).filter(Boolean);
+}
+function compare(target, said, lang = "en") {
+  const t = units(target, lang), s = units(said, lang);
   // LCS เพื่อจับคู่คำตามลำดับ
   const dp = Array.from({ length: t.length + 1 }, () => Array(s.length + 1).fill(0));
   for (let i = 1; i <= t.length; i++) for (let j = 1; j <= s.length; j++)
@@ -466,12 +509,20 @@ function compare(target, said) {
   }
   const extra = Math.max(0, s.length - hit.size);
   const score = t.length ? Math.max(0, Math.round(((hit.size - extra * 0.25) / t.length) * 100)) : 0;
-  return { score, hit, words: target.split(/\s+/) };
+  // segs: ส่วนของประโยคสำหรับแสดงผล พร้อมสถานะถูก/พลาด (เว้นวรรคและเครื่องหมายคงไว้ตามต้นฉบับ)
+  let segs;
+  if (CHAR_LANGS.includes(lang)) {
+    let k = 0;
+    segs = Array.from(target.normalize("NFC")).map((ch) => /[\p{L}\p{N}]/u.test(ch) ? { text: ch, cls: hit.has(k++) ? "ok" : "miss" } : { text: ch, cls: "" });
+  } else {
+    segs = target.split(/\s+/).flatMap((w, i) => [...(i ? [{ text: " ", cls: "" }] : []), { text: w, cls: hit.has(i) ? "ok" : "miss" }]);
+  }
+  return { score, hit, segs };
 }
 
 function renderSpeak() {
-  const level = S.level;
-  const list = PHRASES[level];
+  const level = deck(), L = deckLang(level);
+  const list = deckPhrases(level);
   let idx = Math.floor(Math.random() * list.length);
   let rec = null;
   cleanup = () => { try { rec && rec.abort(); } catch (e) {} };
@@ -479,10 +530,11 @@ function renderSpeak() {
   function draw(result) {
     const p = list[idx];
     $view.innerHTML = `
-      <h1>ฟัง-พูด · ${LEVELS[level].name}</h1>
+      <h1>ฟัง-พูด · ${deckLabel(level)}</h1>
       <p class="sub">ฟังตัวอย่าง แล้วกดไมค์พูดตาม ระบบจะเทียบคำที่คุณพูด</p>
       <div class="card stack center">
-        <div class="phrase">${result ? `<span class="words">${result.words.map((w, i) => `<span class="${result.hit.has(i) ? "ok" : "miss"}">${esc(w)}</span>`).join(" ")}</span>` : esc(p.en)}</div>
+        <div class="phrase">${result ? `<span class="words">${result.segs.map((g) => g.cls ? `<span class="${g.cls}">${esc(g.text)}</span>` : esc(g.text)).join("")}</span>` : esc(p.t)}</div>
+        ${p.r ? `<div class="reading">${esc(p.r)}</div>` : ""}
         <div class="muted">${esc(p.th)}</div>
         <div class="row" style="justify-content:center">
           <button class="btn" id="play">🔊 ฟัง</button>
@@ -503,8 +555,8 @@ function renderSpeak() {
         <button class="btn grow" id="prev">◀ ก่อนหน้า</button>
         <button class="btn grow primary" id="next">ประโยคถัดไป ▶</button>
       </div>`;
-    $view.querySelector("#play").addEventListener("click", () => speak(p.en, 0.95));
-    $view.querySelector("#slow").addEventListener("click", () => speak(p.en, 0.6));
+    $view.querySelector("#play").addEventListener("click", () => speak(p.t, 0.95, L));
+    $view.querySelector("#slow").addEventListener("click", () => speak(p.t, 0.6, L));
     $view.querySelector("#prev").addEventListener("click", () => { idx = (idx - 1 + list.length) % list.length; draw(); });
     $view.querySelector("#next").addEventListener("click", () => { idx = (idx + 1) % list.length; draw(); });
     const mic = $view.querySelector("#mic");
@@ -515,14 +567,15 @@ function renderSpeak() {
       mic.classList.add("on");
       $view.querySelector("#micHint").textContent = "กำลังฟัง... พูดได้เลย";
       rec = listen({
+        lang: L,
         onResult: (alts) => {
-          const best = alts.map((a) => ({ a, r: compare(p.en, a) })).sort((x, y) => y.r.score - x.r.score)[0];
+          const best = alts.map((a) => ({ a, r: compare(p.t, a, L) })).sort((x, y) => y.r.score - x.r.score)[0];
           S.speak.attempts++; S.speak.sum += best.r.score; save();
           addXP(best.r.score >= 80 ? 5 : 1);
           draw({ ...best.r, heard: best.a });
         },
         onError: (err) => {
-          toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : err === "no-speech" ? "ไม่ได้ยินเสียง ลองใหม่อีกครั้ง" : "ฟังเสียงไม่สำเร็จ ลองใหม่");
+          toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : err === "no-speech" ? "ไม่ได้ยินเสียง ลองใหม่อีกครั้ง" : err === "language-not-supported" ? "มือถือเครื่องนี้ฟังภาษานี้ไม่ได้" : "ฟังเสียงไม่สำเร็จ ลองใหม่");
         },
         onEnd: () => { rec = null; mic.classList.remove("on"); const h = $view.querySelector("#micHint"); if (h && h.textContent.startsWith("กำลังฟัง")) h.textContent = "กดแล้วพูดประโยคด้านบน"; },
       });
@@ -539,19 +592,20 @@ let chat = null; // { mode, messages: [{role, content}] }
 
 function renderTutor() {
   if (pendingTutor) {
-    chat = { mode: pendingTutor.mode, messages: [], summarizedAt: 0 };
+    chat = { mode: pendingTutor.mode, lang: S.lang, messages: [], summarizedAt: 0 };
     const text = pendingTutor.text; pendingTutor = null;
     drawChat();
     send(text);
     return;
   }
+  if (chat && chat.lang !== S.lang) { summarizeChat(); chat = null; }
   if (chat) return drawChat();
   $view.innerHTML = `
-    <h1>ครู AI</h1>
+    <h1>ครู AI · ${S.lang === "en" ? "อังกฤษ" : LANG_META[S.lang].name}</h1>
     <p class="sub">เลือกสถานการณ์ที่อยากฝึก ครูจะตอบเป็นภาษาอังกฤษ และแก้จุดผิดพร้อมอธิบายเป็นภาษาไทย</p>
     <button class="card row profile-card" id="toProfile" style="margin-bottom:12px">
       <span style="font-size:24px">🧠</span>
-      <span class="grow" style="text-align:left"><b>${S.profile.name ? `ครูรู้จัก ${esc(S.profile.name)} แล้ว` : "ยังไม่ได้ตั้งโปรไฟล์"}</b><br><span class="muted small">${S.notes ? "ครูจำจุดที่คุณผิดบ่อยไว้แล้ว แตะเพื่อดู" : "แตะเพื่อตั้งโปรไฟล์ให้ครูรู้จักคุณ"}</span></span>
+      <span class="grow" style="text-align:left"><b>${S.profile.name ? `ครูรู้จัก ${esc(S.profile.name)} แล้ว` : "ยังไม่ได้ตั้งโปรไฟล์"}</b><br><span class="muted small">${getNotes() ? "ครูจำจุดที่คุณผิดบ่อยไว้แล้ว แตะเพื่อดู" : "แตะเพื่อตั้งโปรไฟล์ให้ครูรู้จักคุณ"}</span></span>
       <span class="muted">›</span>
     </button>
     <div class="modes">
@@ -562,22 +616,23 @@ function renderTutor() {
     const m = TUTOR_MODES.find((x) => x.id === b.dataset.m);
     chat = newChat(m);
     drawChat();
-    speak(chat.messages[0].content);
+    speak(chat.messages[0].content, 0.95, chat.lang);
   }));
 }
 
 function newChat(m) {
-  let opener = m.opener;
+  const lang = S.lang;
+  let opener = lang === "en" ? m.opener : LANG_CONTENT[lang].openers[m.id];
   const nm = S.profile.name.trim();
-  if (nm && m.id === "chat") opener = opener.replace(/^Hi!/, `Hi ${nm}!`);
-  return { mode: m.id, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
+  if (nm && m.id === "chat" && lang === "en") opener = opener.replace(/^Hi!/, `Hi ${nm}!`);
+  return { mode: m.id, lang, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
 }
 
 function splitReply(text) {
   // บรรทัดที่ขึ้นต้นด้วย ✏️ หรือ 💡 คือส่วนแก้คำผิด/คำอธิบายภาษาไทย
   const lines = text.split("\n");
   const main = [], notes = [];
-  for (const l of lines) (/^\s*(✏️|💡)/.test(l) ? notes : main).push(l);
+  for (const l of lines) (/^\s*(✏️|💡|🔤|💬)/.test(l) ? notes : main).push(l);
   return { main: main.join("\n").trim(), notes: notes.join("\n").trim() };
 }
 
@@ -587,14 +642,14 @@ function drawChat() {
   $view.innerHTML = `
     <div class="row" style="margin-bottom:12px">
       <button class="icon-btn" id="back" aria-label="กลับ">←</button>
-      <div class="grow"><b>${m.icon} ${m.name}</b><div class="muted small">${LEVELS[S.level].name}</div></div>
+      <div class="grow"><b>${m.icon} ${m.name}</b><div class="muted small">${chat.lang === "en" ? deckLabel(S.level) : deckLabel(chat.lang)}</div></div>
       <button class="btn ghost small" id="newChat">เริ่มใหม่</button>
     </div>
     <div class="chat" id="chat">
       ${chat.messages.map((msg) => {
         if (msg.role === "user") return `<div class="msg me">${esc(msg.content)}</div>`;
         const { main, notes } = splitReply(msg.content);
-        return `<div class="msg bot">${esc(main)}<button class="say" data-say="${esc(main)}" aria-label="ฟัง">🔊</button>${notes ? `<span class="fix">${esc(notes)}</span>` : ""}</div>`;
+        return `<div class="msg bot">${esc(main)}<button class="say" data-say="${esc(main)}" data-lang="${chat.lang}" aria-label="ฟัง">🔊</button>${notes ? `<span class="fix">${esc(notes)}</span>` : ""}</div>`;
       }).join("")}
       ${chat.busy ? `<div class="msg bot typing">กำลังพิมพ์...</div>` : ""}
     </div>`;
@@ -607,7 +662,7 @@ function drawChat() {
     c.className = "composer";
     c.innerHTML = `<div class="inner">
       <button class="icon-btn" id="talk" aria-label="พูด">🎤</button>
-      <textarea id="msg" rows="1" placeholder="พิมพ์อังกฤษ หรือถามเป็นไทย"></textarea>
+      <textarea id="msg" rows="1" placeholder="พิมพ์${chat.lang === "en" ? "อังกฤษ" : LANG_META[chat.lang].name} หรือถามเป็นไทย"></textarea>
       <button class="icon-btn" id="send" aria-label="ส่ง" style="background:var(--brand);color:#fff;border-color:var(--brand)">➤</button>
     </div>`;
     document.body.appendChild(c);
@@ -622,6 +677,7 @@ function drawChat() {
       if (rec) { rec.stop(); return; }
       talk.style.background = "var(--accent)";
       rec = listen({
+        lang: chat.lang,
         onResult: (alts) => { ta.value = (ta.value ? ta.value + " " : "") + alts[0]; ta.dispatchEvent(new Event("input")); },
         onError: (err) => toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : "ไม่ได้ยินเสียง ลองใหม่"),
         onEnd: () => { rec = null; talk.style.background = ""; },
@@ -644,7 +700,7 @@ async function send(text) {
       method: "POST",
       signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
-      body: JSON.stringify({ mode: chat.mode, level: S.level, profile: S.profile, notes: S.notes, messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
+      body: JSON.stringify({ mode: chat.mode, lang: chat.lang, level: S.level, profile: S.profile, notes: getNotes(chat.lang), messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
@@ -660,7 +716,7 @@ async function send(text) {
     chat.busy = false;
     const sinceSum = chat.messages.slice(chat.summarizedAt || 0).filter((m) => m.role === "user").length;
     if (sinceSum >= 8) summarizeChat();
-    if (current === "tutor") { drawChat(); speak(splitReply(data.reply).main); }
+    if (current === "tutor") { drawChat(); speak(splitReply(data.reply).main, 0.95, chat.lang); }
   } catch (e) {
     chat.busy = false;
     const msg = e.name === "AbortError" ? "ครู AI ไม่ตอบภายใน 1 นาที ลองส่งใหม่อีกครั้ง" : (e.message || "เกิดข้อผิดพลาด");
@@ -711,11 +767,11 @@ async function summarizeChat() {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
-      body: JSON.stringify({ action: "summarize", level: S.level, profile: S.profile, notes: S.notes, messages: fresh.slice(-30).map(({ role, content }) => ({ role, content })) }),
+      body: JSON.stringify({ action: "summarize", lang: c.lang, level: S.level, profile: S.profile, notes: getNotes(c.lang), messages: fresh.slice(-30).map(({ role, content }) => ({ role, content })) }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && typeof data.notes === "string" && data.notes.trim()) {
-      S.notes = data.notes.trim(); S.notesAt = Date.now(); save();
+      setNotes(c.lang, data.notes.trim());
     }
   } catch (e) { /* ไม่เป็นไร รอบหน้าค่อยสรุปใหม่ */ }
 }
@@ -742,11 +798,12 @@ function renderProfile() {
       <button class="btn primary block" id="saveP">บันทึกโปรไฟล์</button>
     </div>
 
-    <h2>🧠 สิ่งที่ครู AI จำได้</h2>
+    <h2>🧠 สิ่งที่ครู AI จำได้ · ${S.lang === "en" ? "อังกฤษ" : LANG_META[S.lang].name}</h2>
     <div class="card stack">
       <p class="muted small" style="margin:0">ครูสรุปให้อัตโนมัติหลังคุยจบแต่ละครั้ง (จุดที่ผิดบ่อย จุดแข็ง เรื่องที่ชอบคุย) แก้ไขหรือลบได้</p>
-      <textarea class="field" id="notes" rows="7" maxlength="1500" placeholder="ยังไม่มี ลองคุยกับครู AI สักพัก แล้วกลับมาดูนะ">${esc(S.notes)}</textarea>
-      ${S.notesAt ? `<div class="muted small">อัปเดตล่าสุด ${new Date(S.notesAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>` : ""}
+      <textarea class="field" id="notes" rows="7" maxlength="1500" placeholder="ยังไม่มี ลองคุยกับครู AI สักพัก แล้วกลับมาดูนะ">${esc(getNotes())}</textarea>
+      ${S.notesAtBy[S.lang] ? `<div class="muted small">อัปเดตล่าสุด ${new Date(S.notesAtBy[S.lang]).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>` : ""}
+      <div class="muted small">ความจำแยกตามภาษา เปลี่ยนภาษาที่ปุ่มมุมขวาบนเพื่อดูของภาษาอื่น</div>
       <div class="row">
         <button class="btn grow" id="clearN">ลบความจำ</button>
         <button class="btn primary grow" id="saveN">บันทึก</button>
@@ -758,9 +815,9 @@ function renderProfile() {
     $view.querySelectorAll("[data-k]").forEach((i) => { S.profile[i.dataset.k] = i.value.trim(); });
     save(); toast("บันทึกโปรไฟล์แล้ว");
   });
-  $view.querySelector("#saveN").addEventListener("click", () => { S.notes = $view.querySelector("#notes").value.trim(); S.notesAt = Date.now(); save(); toast("บันทึกแล้ว"); });
+  $view.querySelector("#saveN").addEventListener("click", () => { setNotes(S.lang, $view.querySelector("#notes").value.trim()); toast("บันทึกแล้ว"); });
   $view.querySelector("#clearN").addEventListener("click", () => {
-    if (confirm("ลบสิ่งที่ครู AI จำได้ทั้งหมด?")) { S.notes = ""; S.notesAt = 0; save(); renderProfile(); toast("ลบความจำแล้ว"); }
+    if (confirm("ลบสิ่งที่ครู AI จำได้ของภาษานี้?")) { setNotes(S.lang, ""); renderProfile(); toast("ลบความจำแล้ว"); }
   });
 }
 
