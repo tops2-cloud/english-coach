@@ -5,7 +5,7 @@
 //   ANTHROPIC_API_KEY  คีย์แบบเติมเงินจาก console.anthropic.com (Claude)
 // ตัวเลือกเพิ่มเติม (ไม่บังคับ):
 //   AI_PROVIDER        "gemini" หรือ "claude" ถ้ามีทั้งสองคีย์ (ค่าเริ่มต้น: ใช้ Claude ถ้ามีคีย์ ไม่งั้นใช้ Gemini)
-//   GEMINI_MODEL       ค่าเริ่มต้น gemini-flash-latest
+//   GEMINI_MODEL       ค่าเริ่มต้น gemini-3.5-flash-lite (เร็ว) ถ้าใช้ไม่ได้จะลอง gemini-flash-latest
 //   ANTHROPIC_MODEL    ค่าเริ่มต้น claude-haiku-5-5
 //   APP_PASSCODE       ถ้าตั้งไว้ ผู้ใช้ต้องใส่รหัสนี้ก่อนคุยกับครู AI
 
@@ -78,6 +78,7 @@ async function askClaude(system, msgs) {
       system,
       messages: msgs,
     }),
+    signal: AbortSignal.timeout(25000),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data?.error?.message || `HTTP ${r.status}`);
@@ -93,6 +94,7 @@ async function geminiCall(model, system, msgs) {
       contents: msgs.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
       generationConfig: { maxOutputTokens: 2048, temperature: 0.7 },
     }),
+    signal: AbortSignal.timeout(25000),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -105,15 +107,20 @@ async function geminiCall(model, system, msgs) {
 }
 
 async function askGemini(system, msgs) {
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
-  try {
-    return await geminiCall(model, system, msgs);
-  } catch (e) {
-    if (e.status === 429) throw new Error("ใช้ครู AI ครบโควตาฟรีของ Gemini แล้ว รอสักครู่หรือพรุ่งนี้แล้วลองใหม่");
-    // ถ้ารุ่นที่ตั้งไว้ใช้ไม่ได้ ลองรุ่นสำรอง
-    if (!process.env.GEMINI_MODEL && (e.status === 404 || e.status === 400)) return geminiCall("gemini-3.5-flash-lite", system, msgs);
-    throw e;
+  const custom = process.env.GEMINI_MODEL;
+  const models = custom ? [custom] : ["gemini-3.5-flash-lite", "gemini-flash-latest"];
+  let lastErr;
+  for (const model of models) {
+    try {
+      return await geminiCall(model, system, msgs);
+    } catch (e) {
+      if (e.status === 429) throw new Error("ใช้ครู AI ครบโควตาฟรีของ Gemini แล้ว รอสักครู่หรือพรุ่งนี้แล้วลองใหม่");
+      if (e.status === 401 || e.status === 403) throw new Error("GEMINI_API_KEY ไม่ถูกต้องหรือถูกลบไปแล้ว ตรวจคีย์ใน Vercel แล้ว Redeploy");
+      lastErr = e.name === "TimeoutError" ? new Error("Gemini ตอบช้าเกินไป") : e;
+      // ลองรุ่นถัดไป
+    }
   }
+  throw lastErr;
 }
 
 export default async function handler(req, res) {
@@ -145,6 +152,7 @@ export default async function handler(req, res) {
     const reply = provider === "claude" ? await askClaude(system, msgs) : await askGemini(system, msgs);
     return res.status(200).json({ reply: reply || "Sorry, could you say that again?", provider });
   } catch (e) {
-    return res.status(502).json({ error: "ครู AI ตอบไม่ได้ตอนนี้: " + (e.message || "เชื่อมต่อไม่สำเร็จ") });
+    const msg = e.name === "TimeoutError" ? "ตอบช้าเกินไป ลองส่งใหม่อีกครั้ง" : (e.message || "เชื่อมต่อไม่สำเร็จ");
+    return res.status(502).json({ error: "ครู AI ตอบไม่ได้ตอนนี้: " + msg });
   }
 }

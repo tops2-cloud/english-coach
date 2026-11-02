@@ -608,9 +608,12 @@ async function send(text) {
   chat.busy = true;
   drawChat();
   S.tutorMsgs++; addXP(3);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
   try {
     const res = await fetch("/api/tutor", {
       method: "POST",
+      signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
       body: JSON.stringify({ mode: chat.mode, level: S.level, messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
     });
@@ -623,14 +626,17 @@ async function send(text) {
       drawChat();
       return;
     }
-    if (!res.ok) throw new Error(data.error || "เชื่อมต่อครู AI ไม่สำเร็จ");
+    if (!res.ok) throw new Error(data.error || `เชื่อมต่อครู AI ไม่สำเร็จ (รหัส ${res.status})`);
     chat.messages.push({ role: "assistant", content: data.reply });
     chat.busy = false;
     if (current === "tutor") { drawChat(); speak(splitReply(data.reply).main); }
   } catch (e) {
     chat.busy = false;
-    chat.messages.push({ role: "assistant", err: true, content: "💡 " + (e.message || "เกิดข้อผิดพลาด") });
+    const msg = e.name === "AbortError" ? "ครู AI ไม่ตอบภายใน 1 นาที ลองส่งใหม่อีกครั้ง" : (e.message || "เกิดข้อผิดพลาด");
+    chat.messages.push({ role: "assistant", err: true, content: "💡 " + msg });
     if (current === "tutor") drawChat();
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -32,7 +32,7 @@
 
 - มีคีย์เดียว → ใช้ตัวนั้น
 - มีทั้งสองคีย์ → ใช้ Claude เป็นหลัก ถ้าอยากใช้ Gemini ให้เพิ่ม `AI_PROVIDER` = `gemini`
-- ตัวเลือกเสริม: `GEMINI_MODEL` (ค่าเริ่มต้น `gemini-flash-latest`), `ANTHROPIC_MODEL` (ค่าเริ่มต้น `claude-haiku-5-5`)
+- ตัวเลือกเสริม: `GEMINI_MODEL` (ค่าเริ่มต้น `gemini-3.5-flash-lite` สำรองด้วย `gemini-flash-latest`), `ANTHROPIC_MODEL` (ค่าเริ่มต้น `claude-haiku-5-5`)
 
 เพิ่มหรือเปลี่ยนค่าแล้ว ต้องไปที่ **Deployments** กด ⋯ ที่อันล่าสุด → **Redeploy** ทุกครั้ง
 
