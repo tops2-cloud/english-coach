@@ -112,6 +112,31 @@ function translateSystem(partner) {
   ].join("\n");
 }
 
+function lookupSystem(partner) {
+  const P = langName(partner);
+  const reading = (LANGS[partner] || {}).reading || (partner === "en" ? "IPA in slashes, e.g. /ˈhæp.i/" : "");
+  return [
+    `You are a pocket dictionary for Thai speakers learning ${P}.`,
+    `The user types a word or short phrase. If it is in ${P} (or looks like a romanized ${P} word), explain it for a Thai speaker. If it is in Thai, give the most common ${P} equivalents.`,
+    "Return ONLY a JSON object, no code fence, in this shape:",
+    "{",
+    `  "direction": "to_th" (input was ${P}) or "from_th" (input was Thai),`,
+    `  "entries": [  // 1 to 3 entries, most common first. Each entry is a ${P} word or phrase.`,
+    "    {",
+    `      "word": "<the ${P} word/phrase in its normal script>",`,
+    `      "reading": "<${reading || "empty string"}>",`,
+    `      "thai_sound": "<how to say it written approximately with Thai letters, with hyphens between syllables, e.g. แฮบ-พี่>",`,
+    "      \"pos\": \"<part of speech in Thai, e.g. คำนาม / คำกริยา / คำคุณศัพท์ / วลี>\",",
+    "      \"meaning_th\": \"<short Thai meaning; if several senses, separate with ; >\",",
+    `      "examples": [ { "text": "<short, natural ${P} example sentence>", "reading": "<${reading ? "its reading" : "empty string"}>", "th": "<Thai translation>" } ]  // 2 examples`,
+    "    }",
+    "  ],",
+    "  \"note_th\": \"<optional one-line tip in Thai (politeness, common mistake, similar word), or empty string>\"",
+    "}",
+    "If the input is not a real word or is misspelled, give the closest likely word and say so in note_th. Keep everything accurate, common and suitable for all ages.",
+  ].join("\n");
+}
+
 function parseJSON(text) {
   const s = String(text || "");
   const a = s.indexOf("{"), b = s.lastIndexOf("}");
@@ -246,6 +271,23 @@ export default async function handler(req, res) {
         reading: String(j.reading || "").trim(),
         provider,
       });
+    }
+
+    // ---------- ค้นคำ (พจนานุกรม) ----------
+    if (action === "lookup") {
+      const text = String(body.text || "").trim().slice(0, 120);
+      const partner = LANGS[body.partner] && body.partner !== "th" ? body.partner : "en";
+      if (!text) return res.status(400).json({ error: "ไม่มีคำให้ค้น" });
+      const out = await ask(provider, lookupSystem(partner), [{ role: "user", content: "Look up: " + text }], { json: true, maxTokens: 1200 });
+      const j = parseJSON(out);
+      if (!j || !Array.isArray(j.entries) || !j.entries.length) return res.status(502).json({ error: "ค้นคำไม่สำเร็จ ลองใหม่อีกครั้ง" });
+      const str = (v, n) => String(v || "").trim().slice(0, n);
+      const entries = j.entries.slice(0, 3).map((e) => ({
+        word: str(e.word, 120), reading: str(e.reading, 160), thai_sound: str(e.thai_sound, 120),
+        pos: str(e.pos, 40), meaning_th: str(e.meaning_th, 300),
+        examples: (Array.isArray(e.examples) ? e.examples : []).slice(0, 3).map((x) => ({ text: str(x.text, 200), reading: str(x.reading, 240), th: str(x.th, 200) })).filter((x) => x.text),
+      })).filter((e) => e.word);
+      return res.status(200).json({ query: text, partner, direction: j.direction === "from_th" ? "from_th" : "to_th", entries, note_th: str(j.note_th, 300) });
     }
 
     // ---------- สรุปความจำของครู ----------

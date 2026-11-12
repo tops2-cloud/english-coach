@@ -826,10 +826,13 @@ function renderProfile() {
    ========================================================= */
 let trLog = [];       // { from: "th"|partner, src, dst, reading }
 let trBusy = false;
+let dictRes = null;   // ผลค้นคำล่าสุด
+let dictBusy = false;
 function renderTranslate() {
   if (!S.partner) S.partner = "en";
   if (!S.trMode) S.trMode = "face";
   if (!S.saved) S.saved = [];
+  if (!S.dictHist) S.dictHist = [];
   const P = S.partner, PM = LANG_META[P], PU = PARTNER_UI[P];
   let rec = null;
   cleanup = () => { try { rec && rec.abort(); } catch (e) {} };
@@ -839,7 +842,8 @@ function renderTranslate() {
     <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">${chips}</div>
     <div class="seg" style="margin-bottom:10px">
       <button data-mode="face" class="${S.trMode === "face" ? "sel" : ""}">🗣️ คุยต่อหน้า</button>
-      <button data-mode="type" class="${S.trMode === "type" ? "sel" : ""}">⌨️ พิมพ์ / ประวัติ</button>
+      <button data-mode="type" class="${S.trMode === "type" ? "sel" : ""}">⌨️ พิมพ์แปล</button>
+      <button data-mode="dict" class="${S.trMode === "dict" ? "sel" : ""}">📖 ค้นคำ</button>
     </div>`;
 
   const line = (t, side) => {
@@ -891,6 +895,9 @@ function renderTranslate() {
     bindMic("#micThem", P);
     bindMic("#micMe", "th");
     $view.querySelector("#toType").addEventListener("click", () => { S.trMode = "type"; save(); renderTranslate(); });
+  } else if (S.trMode === "dict") {
+    $view.innerHTML = header;
+    renderDict(P, PM, (r) => { rec = r; });
   } else {
     $view.classList.add("has-composer");
     $view.innerHTML = header + `
@@ -945,6 +952,92 @@ function renderTranslate() {
 
   $view.querySelectorAll("[data-p]").forEach((b) => b.addEventListener("click", () => { S.partner = b.dataset.p; save(); trLog = []; go("translate"); }));
   $view.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => { S.trMode = b.dataset.mode; save(); go("translate"); }));
+}
+
+/* ---------- ค้นคำ: ความหมาย คำอ่าน เสียงอ่าน ตัวอย่าง ---------- */
+function renderDict(P, PM, setRec) {
+  const r = dictRes && dictRes.partner === P ? dictRes : null;
+  const isSaved = (w) => S.saved.some((x) => x.text === w);
+  $view.innerHTML += `
+    <div class="card" style="padding:10px">
+      <div class="row" style="gap:8px">
+        <input class="field grow" id="dictIn" placeholder="พิมพ์คำ${PM.name} หรือคำไทย" maxlength="120" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        <button class="icon-btn" id="dictMic" aria-label="พูดคำ${PM.name}">🎤</button>
+        <button class="icon-btn" id="dictGo" aria-label="ค้น" style="background:var(--brand);color:#fff;border-color:var(--brand)">🔍</button>
+      </div>
+    </div>
+    <div id="dictOut" style="margin-top:12px">
+      ${dictBusy ? `<div class="card center muted">กำลังค้น...</div>` : r ? `
+        ${r.entries.map((e, i) => `
+          <div class="card stack dict-entry">
+            <div class="row" style="align-items:flex-start">
+              <div class="grow">
+                <div class="dict-word">${esc(e.word)}</div>
+                ${e.reading ? `<div class="reading">${esc(e.reading)}</div>` : ""}
+                ${e.thai_sound ? `<div class="small">อ่านว่า <b>${esc(e.thai_sound)}</b></div>` : ""}
+              </div>
+              <button class="icon-btn" data-dsay="${i}" aria-label="ฟังเสียง">🔊</button>
+              <button class="icon-btn" data-dstar="${i}" aria-label="บันทึก">${isSaved(e.word) ? "⭐" : "☆"}</button>
+            </div>
+            <div>${e.pos ? `<span class="pill">${esc(e.pos)}</span> ` : ""}<b style="font-size:18px">${esc(e.meaning_th)}</b></div>
+            ${e.examples.length ? `<div class="stack" style="border-top:1px dashed var(--line);padding-top:10px">${e.examples.map((x) => `
+              <div>
+                <div><button class="say" data-say="${esc(x.text)}" data-lang="${P}" style="padding:0 6px 0 0">🔊</button>${esc(x.text)}</div>
+                ${x.reading ? `<div class="reading small">${esc(x.reading)}</div>` : ""}
+                <div class="muted small">${esc(x.th)}</div>
+              </div>`).join("")}</div>` : ""}
+          </div>`).join("")}
+        ${r.note_th ? `<div class="explain" style="margin-top:12px">💡 ${esc(r.note_th)}</div>` : ""}
+      ` : `<div class="card empty"><div class="e">📖</div><p class="muted">พิมพ์คำ${PM.name}เพื่อดูความหมายและวิธีออกเสียง<br>หรือพิมพ์คำไทยเพื่อดูว่า${PM.name}พูดว่าอะไร</p></div>`}
+    </div>
+    ${S.dictHist.length ? `<h2>ค้นล่าสุด</h2><div class="row" style="flex-wrap:wrap;gap:6px">${S.dictHist.filter((h) => h.p === P).slice(0, 15).map((h) => `<button class="chip" data-hist="${esc(h.q)}">${esc(h.q)}</button>`).join("")}</div>` : ""}`;
+
+  const inp = $view.querySelector("#dictIn");
+  const goSearch = () => { const t = inp.value.trim(); if (t && !dictBusy) doLookup(t); };
+  $view.querySelector("#dictGo").addEventListener("click", goSearch);
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); goSearch(); } });
+  $view.querySelectorAll("[data-hist]").forEach((b) => b.addEventListener("click", () => doLookup(b.dataset.hist)));
+  if (r) {
+    $view.querySelectorAll("[data-dsay]").forEach((b) => b.addEventListener("click", () => speak(r.entries[+b.dataset.dsay].word, 0.8, P)));
+    $view.querySelectorAll("[data-dstar]").forEach((b) => b.addEventListener("click", () => {
+      const e = r.entries[+b.dataset.dstar];
+      const i = S.saved.findIndex((x) => x.text === e.word);
+      if (i >= 0) { S.saved.splice(i, 1); toast("เอาออกจากที่บันทึกแล้ว"); }
+      else { S.saved.unshift({ lang: P, text: e.word, reading: e.reading || e.thai_sound, th: e.meaning_th }); S.saved = S.saved.slice(0, 100); toast("บันทึกคำแล้ว ⭐ ดูได้ที่ ⌨️ พิมพ์แปล"); }
+      save(); renderTranslateSoft();
+    }));
+    bindSay();
+  }
+  const mic = $view.querySelector("#dictMic");
+  mic.addEventListener("click", () => {
+    if (!SR) { toast("ใช้ Chrome บน Android เพื่อใช้ไมค์"); return; }
+    mic.classList.add("on"); mic.style.background = "var(--accent)";
+    setRec(listen({
+      lang: P,
+      onResult: (alts) => { inp.value = alts[0]; doLookup(alts[0]); },
+      onError: (err) => toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : "ไม่ได้ยินเสียง ลองใหม่"),
+      onEnd: () => { mic.classList.remove("on"); mic.style.background = ""; },
+    }));
+  });
+  if (!r && !dictBusy) inp.focus({ preventScroll: true });
+}
+
+async function doLookup(text) {
+  const P = S.partner;
+  dictBusy = true;
+  if (current === "translate") renderTranslateSoft();
+  try {
+    const d = await api({ action: "lookup", text, partner: P });
+    dictRes = d;
+    S.dictHist = [{ q: text, p: P }, ...S.dictHist.filter((h) => !(h.q === text && h.p === P))].slice(0, 40);
+    save(); addXP(1);
+    dictBusy = false;
+    if (current === "translate") { renderTranslateSoft(); if (d.entries[0]) speak(d.entries[0].word, 0.8, P); }
+  } catch (e) {
+    dictBusy = false;
+    toast(e.message);
+    if (current === "translate") renderTranslateSoft();
+  }
 }
 
 async function doTranslate(text, from) {
