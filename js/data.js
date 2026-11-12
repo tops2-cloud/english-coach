@@ -193,12 +193,12 @@ export const TUTOR_MODES = [
 
 // ---------- ภาษา ----------
 export const LANG_META = {
-  th: { name: "ไทย", flag: "🇹🇭", tts: "th-TH" },
-  en: { name: "อังกฤษ", flag: "🇬🇧", tts: "en-US" },
-  ko: { name: "เกาหลี", flag: "🇰🇷", tts: "ko-KR" },
-  ja: { name: "ญี่ปุ่น", flag: "🇯🇵", tts: "ja-JP" },
-  zh: { name: "จีน", flag: "🇨🇳", tts: "zh-CN" },
-  vi: { name: "เวียดนาม", flag: "🇻🇳", tts: "vi-VN" },
+  th: { abbr: "TH", name: "ไทย", flag: "🇹🇭", tts: "th-TH" },
+  en: { abbr: "ENG", name: "อังกฤษ", flag: "🇬🇧", tts: "en-US" },
+  ko: { abbr: "KR", name: "เกาหลี", flag: "🇰🇷", tts: "ko-KR" },
+  ja: { abbr: "JP", name: "ญี่ปุ่น", flag: "🇯🇵", tts: "ja-JP" },
+  zh: { abbr: "CHN", name: "จีน", flag: "🇨🇳", tts: "zh-CN" },
+  vi: { abbr: "VN", name: "เวียดนาม", flag: "🇻🇳", tts: "vi-VN" },
 };
 
 // ข้อความบนฝั่งคนต่างชาติ (หน้าแปลแบบคุยต่อหน้า)

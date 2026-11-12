@@ -274,3 +274,6 @@ label.stack > * + * { margin-top: 6px; }
 .seg button { font-size: 14px; padding: 8px 4px; }
 .dict-word { font-size: 28px; font-weight: 700; line-height: 1.3; word-break: break-word; }
 .dict-entry + .dict-entry { margin-top: 12px; }
+
+.lang-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 8px; }
+.lang-chip { padding: 6px 2px; font-size: 13px; font-weight: 600; white-space: nowrap; text-align: center; }

@@ -837,9 +837,9 @@ function renderTranslate() {
   let rec = null;
   cleanup = () => { try { rec && rec.abort(); } catch (e) {} };
 
-  const chips = Object.keys(PARTNER_UI).map((k) => `<button class="chip ${k === P ? "sel" : ""}" data-p="${k}">${LANG_META[k].flag} ${LANG_META[k].name}</button>`).join("");
+  const chips = Object.keys(PARTNER_UI).map((k) => `<button class="chip lang-chip ${k === P ? "sel" : ""}" data-p="${k}" aria-label="${LANG_META[k].name}">${LANG_META[k].flag} ${LANG_META[k].abbr}</button>`).join("");
   const header = `
-    <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">${chips}</div>
+    <div class="lang-chips">${chips}</div>
     <div class="seg" style="margin-bottom:10px">
       <button data-mode="face" class="${S.trMode === "face" ? "sel" : ""}">🗣️ คุยต่อหน้า</button>
       <button data-mode="type" class="${S.trMode === "type" ? "sel" : ""}">⌨️ พิมพ์แปล</button>
