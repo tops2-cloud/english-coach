@@ -1,5 +1,12 @@
 import { LEVELS, VOCAB, QUIZ, PHRASES, TUTOR_MODES, LANG_META, PARTNER_UI } from "./data.js";
 import { LANG_CONTENT } from "./data-langs.js";
+import { EN_INTER, LANG_INTER } from "./data-inter.js";
+
+// ระดับกลางของภาษาอังกฤษใช้โครงเดียวกับระดับอื่น
+VOCAB.intermediate = EN_INTER.vocab;
+QUIZ.intermediate = EN_INTER.quiz;
+PHRASES.intermediate = EN_INTER.phrases;
+const LANG_LEVELS = { beginner: "ผู้เริ่มต้น", intermediate: "ระดับกลาง" }; // ระดับของภาษาอื่น
 
 const LEARN_LANGS = ["en", "ko", "ja", "zh", "vi"];
 
@@ -33,18 +40,26 @@ const getNotes = (l = S.lang) => S.notesBy[l] || "";
 const setNotes = (l, t) => { S.notesBy[l] = t; S.notesAtBy[l] = t ? Date.now() : 0; save(); };
 
 /* ---------- ชุดบทเรียน (deck): อังกฤษแยกตามระดับ ภาษาอื่นใช้ชื่อภาษา ---------- */
-const deck = () => (S.lang === "en" ? S.level : S.lang);
-const deckLang = (d) => (LEVELS[d] ? "en" : d);
-const deckLabel = (d = deck()) => LEVELS[d] ? `${LANG_META.en.flag} อังกฤษ · ${LEVELS[d].name}` : `${LANG_META[d].flag} ${LANG_META[d].name}`;
+// ภาษาอื่น: ระดับเริ่มต้นใช้ชื่อภาษา (เช่น "ko") ระดับกลางเติม "-int" (เช่น "ko-int") เพื่อให้ความคืบหน้าเดิมยังอยู่
+const langLevel = (l = S.lang) => (S.langLevel && S.langLevel[l]) || "beginner";
+const levelOf = (l = S.lang) => (l === "en" ? S.level : langLevel(l));
+const deckFor = (l, lv) => (l === "en" ? lv : lv === "intermediate" ? l + "-int" : l);
+const deck = () => deckFor(S.lang, levelOf());
+const deckLang = (d) => (LEVELS[d] ? "en" : d.split("-")[0]);
+const deckIsInter = (d) => d.endsWith("-int");
+const deckLabel = (d = deck()) => LEVELS[d]
+  ? `${LANG_META.en.flag} อังกฤษ · ${LEVELS[d].name}`
+  : `${LANG_META[deckLang(d)].flag} ${LANG_META[deckLang(d)].name} · ${deckIsInter(d) ? "ระดับกลาง" : "ผู้เริ่มต้น"}`;
+const langSet = (d) => (deckIsInter(d) ? LANG_INTER[deckLang(d)] : LANG_CONTENT[d]);
 const _vc = {};
 function deckVocab(d) {
   if (_vc[d]) return _vc[d];
   return (_vc[d] = LEVELS[d]
     ? VOCAB[d].map((x) => ({ w: x.en, r: "", pos: x.pos, th: x.th, ex: x.ex, exR: "", exTh: x.exTh }))
-    : LANG_CONTENT[d].vocab.map((x) => ({ ...x, pos: "" })));
+    : langSet(d).vocab.map((x) => ({ ...x, pos: "" })));
 }
-const deckQuiz = (d) => (LEVELS[d] ? QUIZ[d] : LANG_CONTENT[d].quiz);
-const deckPhrases = (d) => (LEVELS[d] ? PHRASES[d].map((x) => ({ t: x.en, r: "", th: x.th })) : LANG_CONTENT[d].phrases);
+const deckQuiz = (d) => (LEVELS[d] ? QUIZ[d] : langSet(d).quiz);
+const deckPhrases = (d) => (LEVELS[d] ? PHRASES[d].map((x) => ({ t: x.en, r: "", th: x.th })) : langSet(d).phrases);
 const hasThai = (t) => /[\u0E00-\u0E7F]/.test(t);
 function load() {
   try {
@@ -150,19 +165,22 @@ function go(tab) {
 document.querySelectorAll(".tabbar button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
 
 function renderLevelChip() {
-  document.getElementById("levelBtn").textContent = S.lang === "en" ? `${LANG_META.en.flag} ${LEVELS[S.level].name}` : `${LANG_META[S.lang].flag} ${LANG_META[S.lang].name}`;
+  document.getElementById("levelBtn").textContent = S.lang === "en" ? `${LANG_META.en.flag} ${LEVELS[S.level].name}` : `${LANG_META[S.lang].flag} ${LANG_META[S.lang].name} · ${langLevel() === "intermediate" ? "กลาง" : "เริ่มต้น"}`;
 }
 document.getElementById("levelBtn").addEventListener("click", () => {
   const bg = document.createElement("div");
   bg.className = "sheet-bg";
   const opts = [
     ...Object.entries(LEVELS).map(([k, v]) => ({ lang: "en", level: k, icon: LANG_META.en.flag, name: `อังกฤษ · ${v.name}`, desc: v.desc })),
-    ...LEARN_LANGS.filter((l) => l !== "en").map((l) => ({ lang: l, level: "", icon: LANG_META[l].flag, name: LANG_META[l].name, desc: "ผู้เริ่มต้น · ชีวิตประจำวันและท่องเที่ยว" })),
+    ...LEARN_LANGS.filter((l) => l !== "en").flatMap((l) => [
+      { lang: l, level: "beginner", icon: LANG_META[l].flag, name: `${LANG_META[l].name} · ผู้เริ่มต้น`, desc: "ชีวิตประจำวันและท่องเที่ยว" },
+      { lang: l, level: "intermediate", icon: LANG_META[l].flag, name: `${LANG_META[l].name} · ระดับกลาง`, desc: "สนทนาคล่องขึ้น ไวยากรณ์ที่ใช้บ่อย" },
+    ]),
   ];
   bg.innerHTML = `<div class="sheet stack" style="max-height:85dvh;overflow-y:auto">
     <h2>เลือกภาษาที่จะเรียน</h2>
     ${opts.map((o, i) => `
-      <button class="opt ${o.lang === S.lang && (o.lang !== "en" || o.level === S.level) ? "sel" : ""}" data-o="${i}">
+      <button class="opt ${o.lang === S.lang && o.level === levelOf(o.lang) ? "sel" : ""}" data-o="${i}">
         <span style="font-size:26px">${o.icon}</span>
         <span><b>${o.name}</b><br><span class="muted small">${o.desc}</span></span>
       </button>`).join("")}
@@ -172,7 +190,10 @@ document.getElementById("levelBtn").addEventListener("click", () => {
     if (b) {
       const o = opts[+b.dataset.o];
       if (chat && chat.lang !== o.lang) { summarizeChat(); chat = null; }
-      S.lang = o.lang; if (o.level) S.level = o.level; save(); renderLevelChip(); go(current);
+      S.lang = o.lang;
+      if (o.lang === "en") S.level = o.level;
+      else { S.langLevel = { ...(S.langLevel || {}), [o.lang]: o.level }; }
+      save(); renderLevelChip(); go(current);
     }
     if (b || e.target === bg) bg.remove();
   });
@@ -252,7 +273,7 @@ function renderHome() {
   $view.querySelector("#toProfile").addEventListener("click", () => go("profile"));
   $view.querySelector("#reset").addEventListener("click", () => {
     if (confirm("ล้างความคืบหน้าทั้งหมดในเครื่องนี้? ย้อนกลับไม่ได้")) {
-      const lvl = S.level, lng = S.lang, pc = S.passcode, pf = S.profile; S = defaultState(); S.level = lvl; S.lang = lng; S.passcode = pc; S.profile = pf; save(); go("home"); toast("ล้างข้อมูลการเรียนแล้ว");
+      const lvl = S.level, lng = S.lang, pc = S.passcode, pf = S.profile, ll = S.langLevel; S = defaultState(); S.level = lvl; S.lang = lng; S.passcode = pc; S.profile = pf; S.langLevel = ll; save(); go("home"); toast("ล้างข้อมูลการเรียนแล้ว");
     }
   });
 }
@@ -598,7 +619,7 @@ function renderTutor() {
     send(text);
     return;
   }
-  if (chat && chat.lang !== S.lang) { summarizeChat(); chat = null; }
+  if (chat && (chat.lang !== S.lang || (chat.level && chat.level !== levelOf()))) { summarizeChat(); chat = null; }
   if (chat) return drawChat();
   $view.innerHTML = `
     <h1>ครู AI · ${S.lang === "en" ? "อังกฤษ" : LANG_META[S.lang].name}</h1>
@@ -623,9 +644,10 @@ function renderTutor() {
 function newChat(m) {
   const lang = S.lang;
   let opener = lang === "en" ? m.opener : LANG_CONTENT[lang].openers[m.id];
+  const level = levelOf(lang);
   const nm = S.profile.name.trim();
   if (nm && m.id === "chat" && lang === "en") opener = opener.replace(/^Hi!/, `Hi ${nm}!`);
-  return { mode: m.id, lang, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
+  return { mode: m.id, lang, level, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
 }
 
 function splitReply(text) {
@@ -642,7 +664,7 @@ function drawChat() {
   $view.innerHTML = `
     <div class="row" style="margin-bottom:12px">
       <button class="icon-btn" id="back" aria-label="กลับ">←</button>
-      <div class="grow"><b>${m.icon} ${m.name}</b><div class="muted small">${chat.lang === "en" ? deckLabel(S.level) : deckLabel(chat.lang)}</div></div>
+      <div class="grow"><b>${m.icon} ${m.name}</b><div class="muted small">${deckLabel(deckFor(chat.lang, chat.level || levelOf(chat.lang)))}</div></div>
       <button class="btn ghost small" id="newChat">เริ่มใหม่</button>
     </div>
     <div class="chat" id="chat">
@@ -700,7 +722,7 @@ async function send(text) {
       method: "POST",
       signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
-      body: JSON.stringify({ mode: chat.mode, lang: chat.lang, level: S.level, profile: S.profile, notes: getNotes(chat.lang), messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
+      body: JSON.stringify({ mode: chat.mode, lang: chat.lang, level: chat.level || levelOf(chat.lang), profile: S.profile, notes: getNotes(chat.lang), messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
@@ -767,7 +789,7 @@ async function summarizeChat() {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
-      body: JSON.stringify({ action: "summarize", lang: c.lang, level: S.level, profile: S.profile, notes: getNotes(c.lang), messages: fresh.slice(-30).map(({ role, content }) => ({ role, content })) }),
+      body: JSON.stringify({ action: "summarize", lang: c.lang, level: c.level || levelOf(c.lang), profile: S.profile, notes: getNotes(c.lang), messages: fresh.slice(-30).map(({ role, content }) => ({ role, content })) }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && typeof data.notes === "string" && data.notes.trim()) {

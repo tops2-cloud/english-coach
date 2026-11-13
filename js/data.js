@@ -3,6 +3,7 @@
 
 export const LEVELS = {
   beginner: { name: "ผู้เริ่มต้น", desc: "ชีวิตประจำวัน" },
+  intermediate: { name: "ระดับกลาง", desc: "สนทนาคล่องขึ้น ไวยากรณ์ที่ใช้บ่อย" },
   work: { name: "คนทำงาน", desc: "ประชุม อีเมล สัมภาษณ์" },
 };
 

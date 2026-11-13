@@ -21,6 +21,7 @@ const langName = (c) => (LANGS[c] || LANGS.en).name;
 
 const LEVEL_TEXT = {
   beginner: "The learner is a Thai adult beginner. Use short, simple sentences and very common words.",
+  intermediate: "The learner is a Thai adult at an intermediate level (about CEFR A2–B1, TOPIK 2–3, JLPT N4, HSK 3). Use natural everyday language with some longer sentences, common connectors and everyday idioms. Keep Thai mainly for corrections and short explanations.",
   work: "The learner is a Thai working professional (about CEFR A2–B1) who needs the language for meetings, emails and interviews. Use clear, natural business language.",
 };
 
@@ -60,7 +61,7 @@ function systemPrompt(mode, level, profile, notes, lang) {
   const reading = (LANGS[lang] || {}).reading;
   const rules = [
     `You are a warm, encouraging ${L} coach for Thai speakers inside a learning app.`,
-    lang === "en" ? (LEVEL_TEXT[level] || LEVEL_TEXT.beginner) : LEVEL_TEXT.beginner,
+    lang === "en" ? (LEVEL_TEXT[level] || LEVEL_TEXT.beginner) : (level === "intermediate" ? LEVEL_TEXT.intermediate : LEVEL_TEXT.beginner),
     MODE_TEXT[mode] || MODE_TEXT.chat,
     "",
     "Reply format rules (important):",
