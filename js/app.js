@@ -916,22 +916,14 @@ function renderWrite() {
   const GUIDE_NAME = { print: "ตัวพิมพ์", hand: "ตัวเขียน", off: "ปิด" };
 
   $view.innerHTML = `
-    <div class="row" style="gap:6px;margin-bottom:10px">
+    <div class="wbar">
       <button class="chip ${trace ? "sel" : ""}" data-wm="trace">📝 ฝึกเขียนคำ</button>
       <button class="chip ${!trace ? "sel" : ""}" data-wm="free">🎨 วาดอิสระ</button>
       <span class="grow"></span>
       ${trace ? `<button class="chip ${S.wGuide !== "off" ? "sel" : ""}" id="guide" aria-label="เปลี่ยนเส้นนำ">เส้นนำ: ${GUIDE_NAME[S.wGuide]}</button>` : ""}
     </div>
-    ${trace ? `
-      <div class="card row" style="margin-bottom:10px;padding:10px 14px">
-        <div class="grow">
-          <div class="target-word">${esc(w.w)}</div>
-          ${HF ? `<div class="hand-word" title="${HF.note}"><span class="muted small">ตัวเขียน </span><span style="font-family:'${HF.family}',cursive">${esc(w.w)}</span></div>` : ""}
-          ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
-          <div class="muted small">${esc(w.th)}</div>
-        </div>
-        <button class="icon-btn" id="sayW" aria-label="ฟังเสียง">🔊</button>
-      </div>` : ""}
+    ${trace && S.wGuide === "off" ? `
+      <div class="whint">เขียนคำว่า <b>${esc(w.th)}</b> <button class="say" id="sayW" aria-label="ฟังเสียง">🔊</button></div>` : ""}
     <div class="board-wrap" id="wrap">
       <div class="board-grid"></div>
       ${trace && S.wGuide !== "off" ? `<div class="board-ghost" id="ghost" ${S.wGuide === "hand" && HF ? `style="font-family:'${HF.family}',cursive;font-weight:400"` : ""}>${esc(w.w)}</div>` : ""}
@@ -1074,11 +1066,23 @@ function renderWrite() {
         const ok = data.correct;
         addXP(ok ? 5 : 1);
         res.innerHTML = `
-          <div class="card stack center">
-            <div class="verdict" style="color:${ok ? "var(--good)" : data.score >= 50 ? "var(--warn)" : "var(--bad)"}">${ok ? "✅" : "✏️"} ${Number(data.score) || 0}</div>
-            <div>AI อ่านได้ว่า: <b style="font-size:20px">${esc(data.recognized || "(อ่านไม่ออก)")}</b></div>
-            ${data.feedback_th ? `<div class="explain" style="text-align:left">${esc(data.feedback_th)}</div>` : ""}
+          <div class="card stack">
+            <div class="row res-row">
+              <span class="verdict" style="color:${ok ? "var(--good)" : data.score >= 50 ? "var(--warn)" : "var(--bad)"}">${ok ? "✅" : "✏️"} ${Number(data.score) || 0}</span>
+              <span class="grow">AI อ่านได้ว่า: <b style="font-size:20px">${esc(data.recognized || "(อ่านไม่ออก)")}</b></span>
+            </div>
+            <div class="row" style="border-top:1px dashed var(--line);padding-top:10px">
+              <div class="grow">
+                <div class="target-word">${esc(w.w)}</div>
+                ${HF ? `<div class="hand-word"><span class="muted small">ตัวเขียน </span><span style="font-family:'${HF.family}',cursive">${esc(w.w)}</span></div>` : ""}
+                ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
+                <div class="muted small">${esc(w.th)}</div>
+              </div>
+              <button class="icon-btn" id="sayRes" aria-label="ฟังเสียง">🔊</button>
+            </div>
+            ${data.feedback_th ? `<details class="tip"><summary>💡 คำแนะนำจาก AI</summary><div>${esc(data.feedback_th)}</div></details>` : ""}
           </div>`;
+        res.querySelector("#sayRes").addEventListener("click", () => speak(w.w, 0.8, L));
       } else {
         addXP(1);
         res.innerHTML = `
