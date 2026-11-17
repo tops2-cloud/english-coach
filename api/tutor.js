@@ -56,12 +56,13 @@ function learnerContext(profile, notes, lang) {
   ].join("\n");
 }
 
-function systemPrompt(mode, level, profile, notes, lang) {
+function systemPrompt(mode, level, profile, notes, lang, kana) {
   const L = langName(lang);
   const reading = (LANGS[lang] || {}).reading;
   const rules = [
     `You are a warm, encouraging ${L} coach for Thai speakers inside a learning app.`,
     lang === "en" ? (LEVEL_TEXT[level] || LEVEL_TEXT.beginner) : (level === "intermediate" ? LEVEL_TEXT.intermediate : LEVEL_TEXT.beginner),
+    lang === "ja" && kana ? "The learner can read hiragana and katakana but NOT kanji. Write every Japanese text (replies and corrections) using only hiragana and katakana — no kanji at all — and put a space between words to make it easy to read." : "",
     MODE_TEXT[mode] || MODE_TEXT.chat,
     "",
     "Reply format rules (important):",
@@ -356,7 +357,7 @@ export default async function handler(req, res) {
     if (!msgs.length || msgs[msgs.length - 1].role !== "user") {
       return res.status(400).json({ error: "ไม่มีข้อความให้ตอบ" });
     }
-    const reply = await ask(provider, systemPrompt(mode, level, profile, notes, lang), msgs, { maxTokens: lang === "en" ? 500 : 700 });
+    const reply = await ask(provider, systemPrompt(mode, level, profile, notes, lang, !!body.kana), msgs, { maxTokens: lang === "en" ? 500 : 700 });
     return res.status(200).json({ reply: reply || "Sorry, could you say that again?", provider });
   } catch (e) {
     const msg = e.name === "TimeoutError" ? "ตอบช้าเกินไป ลองส่งใหม่อีกครั้ง" : (e.message || "เชื่อมต่อไม่สำเร็จ");

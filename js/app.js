@@ -1,6 +1,7 @@
 import { LEVELS, VOCAB, QUIZ, PHRASES, TUTOR_MODES, LANG_META, PARTNER_UI } from "./data.js";
 import { LANG_CONTENT } from "./data-langs.js";
 import { EN_INTER, LANG_INTER } from "./data-inter.js";
+import { JA_EXTRA, JA_KANA_MAP, JA_KANA_OPENERS } from "./data-ja.js";
 
 // ระดับกลางของภาษาอังกฤษใช้โครงเดียวกับระดับอื่น
 VOCAB.intermediate = EN_INTER.vocab;
@@ -39,27 +40,77 @@ if (!LEARN_LANGS.includes(S.lang)) S.lang = "en";
 const getNotes = (l = S.lang) => S.notesBy[l] || "";
 const setNotes = (l, t) => { S.notesBy[l] = t; S.notesAtBy[l] = t ? Date.now() : 0; save(); };
 
-/* ---------- ชุดบทเรียน (deck): อังกฤษแยกตามระดับ ภาษาอื่นใช้ชื่อภาษา ---------- */
-// ภาษาอื่น: ระดับเริ่มต้นใช้ชื่อภาษา (เช่น "ko") ระดับกลางเติม "-int" (เช่น "ko-int") เพื่อให้ความคืบหน้าเดิมยังอยู่
+/* ---------- ชุดบทเรียน (deck) ----------
+   อังกฤษ: ชื่อระดับ (beginner/intermediate/work)
+   ภาษาอื่น: ผู้เริ่มต้น = ชื่อภาษา (เช่น "ko"), ระดับกลาง = "ko-int"
+   ญี่ปุ่นมีชุดเพิ่ม: "ja-hira" ฮิรางานะ, "ja-kata" คาตาคานะ, "ja-sign" ป้ายที่เจอบ่อย */
+const LEVEL_NAME = { beginner: "ผู้เริ่มต้น", intermediate: "ระดับกลาง", hira: "ฮิรางานะ", kata: "คาตาคานะ", sign: "ป้ายที่เจอบ่อย" };
+const LEVEL_SHORT = { beginner: "เริ่มต้น", intermediate: "กลาง", hira: "ฮิรางานะ", kata: "คาตาคานะ", sign: "ป้าย" };
+const SUFFIX = { intermediate: "int", hira: "hira", kata: "kata", sign: "sign" };
+const LEVEL_OF_SUFFIX = { int: "intermediate", hira: "hira", kata: "kata", sign: "sign" };
 const langLevel = (l = S.lang) => (S.langLevel && S.langLevel[l]) || "beginner";
 const levelOf = (l = S.lang) => (l === "en" ? S.level : langLevel(l));
-const deckFor = (l, lv) => (l === "en" ? lv : lv === "intermediate" ? l + "-int" : l);
+const deckFor = (l, lv) => (l === "en" ? lv : lv === "beginner" || !SUFFIX[lv] ? l : l + "-" + SUFFIX[lv]);
 const deck = () => deckFor(S.lang, levelOf());
 const deckLang = (d) => (LEVELS[d] ? "en" : d.split("-")[0]);
-const deckIsInter = (d) => d.endsWith("-int");
+const deckLevel = (d) => (LEVELS[d] ? d : LEVEL_OF_SUFFIX[d.split("-")[1]] || "beginner");
 const deckLabel = (d = deck()) => LEVELS[d]
   ? `${LANG_META.en.flag} อังกฤษ · ${LEVELS[d].name}`
-  : `${LANG_META[deckLang(d)].flag} ${LANG_META[deckLang(d)].name} · ${deckIsInter(d) ? "ระดับกลาง" : "ผู้เริ่มต้น"}`;
-const langSet = (d) => (deckIsInter(d) ? LANG_INTER[deckLang(d)] : LANG_CONTENT[d]);
+  : `${LANG_META[deckLang(d)].flag} ${LANG_META[deckLang(d)].name} · ${LEVEL_NAME[deckLevel(d)]}`;
+function langSet(d) {
+  const [l, suf] = d.split("-");
+  if (!suf) return LANG_CONTENT[l];
+  if (suf === "int") return LANG_INTER[l];
+  return JA_EXTRA[suf];
+}
+
+// ---------- ญี่ปุ่น: แสดงคันจิเป็นฮิรางานะ (ค่าเริ่มต้น: เปิด) ----------
+const jaKanaOn = (d) => S.jaKana !== false && (d === "ja" || d === "ja-int");
+// ตารางแปลง: ประโยคจาก JA_KANA_MAP + คำศัพท์ (เอาคานะจากคำอ่าน "mizu · みず") เรียงยาวไปสั้น
+const KANA_PAIRS = (() => {
+  const pairs = Object.entries(JA_KANA_MAP);
+  for (const set of [LANG_CONTENT.ja, LANG_INTER.ja]) {
+    for (const x of set.vocab) {
+      const k = (x.r || "").split("·")[1];
+      if (k && /[一-鿿]/.test(x.w)) pairs.push([x.w, k.trim()]);
+    }
+  }
+  return pairs.sort((a, b) => b[0].length - a[0].length);
+})();
+function kanaize(text) {
+  let t = String(text || "");
+  if (!/[一-鿿]/.test(t)) return t;
+  for (const [k, v] of KANA_PAIRS) if (t.includes(k)) t = t.split(k).join(v);
+  return t;
+}
+
 const _vc = {};
 function deckVocab(d) {
-  if (_vc[d]) return _vc[d];
-  return (_vc[d] = LEVELS[d]
+  const key = d + (jaKanaOn(d) ? ":kana" : "");
+  if (_vc[key]) return _vc[key];
+  let list = LEVELS[d]
     ? VOCAB[d].map((x) => ({ w: x.en, r: "", pos: x.pos, th: x.th, ex: x.ex, exR: "", exTh: x.exTh }))
-    : langSet(d).vocab.map((x) => ({ ...x, pos: "" })));
+    : langSet(d).vocab.map((x) => ({ ...x, pos: "" }));
+  if (jaKanaOn(d)) {
+    list = list.map((x) => {
+      const [roma, kana] = (x.r || "").split("·").map((t) => t.trim());
+      if (!kana) return { ...x, ex: kanaize(x.ex) };
+      return { ...x, id: x.w, kanji: x.w, w: kana, r: roma, ex: kanaize(x.ex) };
+    });
+  }
+  return (_vc[key] = list);
 }
-const deckQuiz = (d) => (LEVELS[d] ? QUIZ[d] : langSet(d).quiz);
-const deckPhrases = (d) => (LEVELS[d] ? PHRASES[d].map((x) => ({ t: x.en, r: "", th: x.th })) : langSet(d).phrases);
+const deckQuiz = (d) => {
+  const qs = LEVELS[d] ? QUIZ[d] : langSet(d).quiz;
+  return jaKanaOn(d) ? qs.map((x) => ({ ...x, q: kanaize(x.q), c: x.c.map(kanaize), why: kanaize(x.why) })) : qs;
+};
+// show = ข้อความที่แสดง (คานะ), t = ข้อความจริงที่ใช้อ่านออกเสียงและเทียบเสียงพูด
+const deckPhrases = (d) => {
+  const ps = LEVELS[d] ? PHRASES[d].map((x) => ({ t: x.en, r: "", th: x.th })) : langSet(d).phrases;
+  return jaKanaOn(d) ? ps.map((x) => ({ ...x, show: kanaize(x.t) })) : ps;
+};
+// ชุดที่ให้ทายคำอ่าน: ซ่อนคำอ่านไว้หลังการ์ด
+const hideReadingFront = (d) => ["ja-hira", "ja-kata", "ja-sign"].includes(d);
 const hasThai = (t) => /[\u0E00-\u0E7F]/.test(t);
 function load() {
   try {
@@ -172,7 +223,7 @@ function go(tab) {
 document.querySelectorAll(".tabbar button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
 
 function renderLevelChip() {
-  document.getElementById("levelBtn").textContent = S.lang === "en" ? `${LANG_META.en.flag} ${LEVELS[S.level].name}` : `${LANG_META[S.lang].flag} ${LANG_META[S.lang].name} · ${langLevel() === "intermediate" ? "กลาง" : "เริ่มต้น"}`;
+  document.getElementById("levelBtn").textContent = S.lang === "en" ? `${LANG_META.en.flag} ${LEVELS[S.level].name}` : `${LANG_META[S.lang].flag} ${LANG_META[S.lang].name} · ${LEVEL_SHORT[langLevel()] || "เริ่มต้น"}`;
 }
 document.getElementById("levelBtn").addEventListener("click", () => {
   const bg = document.createElement("div");
@@ -182,6 +233,11 @@ document.getElementById("levelBtn").addEventListener("click", () => {
     ...LEARN_LANGS.filter((l) => l !== "en").flatMap((l) => [
       { lang: l, level: "beginner", icon: LANG_META[l].flag, name: `${LANG_META[l].name} · ผู้เริ่มต้น`, desc: "ชีวิตประจำวันและท่องเที่ยว" },
       { lang: l, level: "intermediate", icon: LANG_META[l].flag, name: `${LANG_META[l].name} · ระดับกลาง`, desc: "สนทนาคล่องขึ้น ไวยากรณ์ที่ใช้บ่อย" },
+      ...(l === "ja" ? [
+        { lang: l, level: "hira", icon: "あ", name: "ญี่ปุ่น · ฮิรางานะ", desc: "ตัวอักษร 46 ตัว พร้อมคำตัวอย่าง" },
+        { lang: l, level: "kata", icon: "ア", name: "ญี่ปุ่น · คาตาคานะ", desc: "ตัวอักษร + คำทับศัพท์อังกฤษที่เจอบ่อย" },
+        { lang: l, level: "sign", icon: "🚻", name: "ญี่ปุ่น · ป้ายที่เจอบ่อย", desc: "คันจิ 30 คำตามสถานี ร้านค้า ห้องน้ำ" },
+      ] : []),
     ]),
   ];
   bg.innerHTML = `<div class="sheet stack" style="max-height:85dvh;overflow-y:auto">
@@ -191,12 +247,23 @@ document.getElementById("levelBtn").addEventListener("click", () => {
         <span style="font-size:26px">${o.icon}</span>
         <span><b>${o.name}</b><br><span class="muted small">${o.desc}</span></span>
       </button>`).join("")}
+    <label class="opt" style="cursor:pointer">
+      <input type="checkbox" id="jaKana" ${S.jaKana !== false ? "checked" : ""} style="width:22px;height:22px;flex:none" />
+      <span><b>🇯🇵 แสดงคันจิเป็นฮิรางานะ</b><br><span class="muted small">ใช้กับญี่ปุ่นระดับผู้เริ่มต้นและระดับกลาง (คันจิจะแสดงตัวเล็กไว้ให้ดู)</span></span>
+    </label>
   </div>`;
+  bg.querySelector("#jaKana").addEventListener("change", (e) => {
+    S.jaKana = e.target.checked; save();
+    if (chat && chat.lang === "ja") { summarizeChat(); chat = null; }
+    toast(S.jaKana ? "แสดงคันจิเป็นฮิรางานะแล้ว" : "แสดงคันจิตามปกติ");
+    go(current);
+  });
   bg.addEventListener("click", (e) => {
+    if (e.target.closest("label")) return;
     const b = e.target.closest("[data-o]");
     if (b) {
       const o = opts[+b.dataset.o];
-      if (chat && chat.lang !== o.lang) { summarizeChat(); chat = null; }
+      if (chat && (chat.lang !== o.lang || chat.level !== o.level)) { summarizeChat(); chat = null; }
       S.lang = o.lang;
       if (o.lang === "en") S.level = o.level;
       else { S.langLevel = { ...(S.langLevel || {}), [o.lang]: o.level }; }
@@ -306,7 +373,7 @@ function renderHome() {
 /* =========================================================
    2) แฟลชการ์ด + ระบบทบทวนตามรอบ (Spaced Repetition)
    ========================================================= */
-const cardId = (d, w) => d + ":" + w.w;
+const cardId = (d, w) => d + ":" + (w.id || w.w);
 const DAY = 86400000;
 
 function dueCards(level) {
@@ -391,9 +458,11 @@ function renderVocab() {
         <button class="icon-btn speak" id="sayWord" aria-label="ฟังเสียง">🔊</button>
         ${isNew ? `<span class="pill" style="margin-bottom:10px">คำใหม่</span>` : ""}
         <div class="word">${esc(w.w)}</div>
-        ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
+        ${w.r && !hideReadingFront(level) ? `<div class="reading">${esc(w.r)}</div>` : ""}
+        ${w.kanji ? `<div class="muted small">คันจิ ${esc(w.kanji)}</div>` : ""}
         ${w.pos ? `<div class="pos">${esc(w.pos)}</div>` : ""}
         <div id="back" hidden style="width:100%">
+          ${w.r && hideReadingFront(level) ? `<div class="reading" style="font-size:22px;margin-top:6px">${esc(w.r)}</div>` : ""}
           <div class="meaning">${esc(w.th)}</div>
           <div class="ex">
             <div class="en">${esc(w.ex)} <button class="say" data-say="${esc(w.ex)}" data-lang="${L}">🔊</button></div>
@@ -579,7 +648,7 @@ function renderSpeak() {
       <h1>ฟัง-พูด · ${deckLabel(level)}</h1>
       <p class="sub">ฟังตัวอย่าง แล้วกดไมค์พูดตาม ระบบจะเทียบคำที่คุณพูด</p>
       <div class="card stack center">
-        <div class="phrase">${result ? `<span class="words">${result.segs.map((g) => g.cls ? `<span class="${g.cls}">${esc(g.text)}</span>` : esc(g.text)).join("")}</span>` : esc(p.t)}</div>
+        <div class="phrase">${result && !(p.show && p.show !== p.t) ? `<span class="words">${result.segs.map((g) => g.cls ? `<span class="${g.cls}">${esc(g.text)}</span>` : esc(g.text)).join("")}</span>` : esc(p.show || p.t)}</div>
         ${p.r ? `<div class="reading">${esc(p.r)}</div>` : ""}
         <div class="muted">${esc(p.th)}</div>
         <div class="row" style="justify-content:center">
@@ -668,11 +737,13 @@ function renderTutor() {
 
 function newChat(m) {
   const lang = S.lang;
-  let opener = lang === "en" ? m.opener : LANG_CONTENT[lang].openers[m.id];
   const level = levelOf(lang);
+  // ญี่ปุ่น: ให้ครูเขียนแค่ฮิรางานะ/คาตาคานะ เมื่อเปิดโหมดคานะ หรือเรียนชุดคานะ/ป้าย
+  const kana = lang === "ja" && (S.jaKana !== false || ["hira", "kata", "sign"].includes(level));
+  let opener = lang === "en" ? m.opener : kana ? JA_KANA_OPENERS[m.id] : LANG_CONTENT[lang].openers[m.id];
   const nm = S.profile.name.trim();
   if (nm && m.id === "chat" && lang === "en") opener = opener.replace(/^Hi!/, `Hi ${nm}!`);
-  return { mode: m.id, lang, level, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
+  return { mode: m.id, lang, level, kana, messages: [{ role: "assistant", content: opener }], summarizedAt: 0 };
 }
 
 function splitReply(text) {
@@ -747,7 +818,7 @@ async function send(text) {
       method: "POST",
       signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-app-passcode": S.passcode || "" },
-      body: JSON.stringify({ mode: chat.mode, lang: chat.lang, level: chat.level || levelOf(chat.lang), profile: S.profile, notes: getNotes(chat.lang), messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
+      body: JSON.stringify({ mode: chat.mode, lang: chat.lang, level: chat.level || levelOf(chat.lang), kana: !!chat.kana, profile: S.profile, notes: getNotes(chat.lang), messages: chat.messages.filter((m) => !m.err).slice(-20).map(({ role, content }) => ({ role, content })) }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
