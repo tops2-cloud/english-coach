@@ -279,11 +279,18 @@ function renderHome() {
       <div class="card"><div class="n">${spk}</div><div class="l">ออกเสียงเฉลี่ย</div></div>
     </div>
 
+    ${installPrompt ? `<button class="btn block" id="install" style="margin-top:12px;min-height:42px;padding:8px">📲 ติดตั้งเป็นแอพบนมือถือ (ใช้ออฟไลน์ได้)</button>` : ""}
     <div style="margin-top:28px" class="center" id="resetWrap">
       <button class="linkbtn" id="reset">ล้างข้อมูลการเรียนทั้งหมด</button>
     </div>
   `;
   $view.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+  $view.querySelector("#install")?.addEventListener("click", async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch (e) {}
+    installPrompt = null; go("home");
+  });
   // ดันลิงก์ล้างข้อมูลให้อยู่ใต้ขอบจอ ต้องเลื่อนลงถึงจะเห็น (กันกดโดยไม่ตั้งใจ)
   const rw = $view.querySelector("#resetWrap");
   const bar = document.querySelector(".tabbar")?.offsetHeight || 64;
@@ -759,7 +766,7 @@ async function send(text) {
     if (current === "tutor") { drawChat(); speak(splitReply(data.reply).main, 0.95, chat.lang); }
   } catch (e) {
     chat.busy = false;
-    const msg = e.name === "AbortError" ? "ครู AI ไม่ตอบภายใน 1 นาที ลองส่งใหม่อีกครั้ง" : (e.message || "เกิดข้อผิดพลาด");
+    const msg = navigator.onLine === false ? "ไม่มีอินเทอร์เน็ต: ครู AI ต้องใช้เน็ต" : e.name === "AbortError" ? "ครู AI ไม่ตอบภายใน 1 นาที ลองส่งใหม่อีกครั้ง" : (e.message || "เกิดข้อผิดพลาด");
     chat.messages.push({ role: "assistant", err: true, content: "💡 " + msg });
     if (current === "tutor") drawChat();
   } finally {
@@ -769,6 +776,7 @@ async function send(text) {
 
 /* ---------- เรียก AI ฝั่งเซิร์ฟเวอร์ (จัดการรหัสผ่านให้) ---------- */
 async function api(body, timeoutMs = 45000) {
+  if (navigator.onLine === false) throw new Error("ไม่มีอินเทอร์เน็ต: ฟีเจอร์ AI ต้องใช้เน็ต");
   for (let attempt = 0; attempt < 3; attempt++) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -884,13 +892,9 @@ function renderPractice() {
 /* ---------- ✍️ เขียน: กระดานวาดด้วยนิ้ว/ปากกา + AI อ่านลายมือ ---------- */
 let writeIdx = null;
 // ฟอนต์ลายมือ (ตัวเขียน) ของแต่ละภาษา จาก Google Fonts
-// อังกฤษ/เวียดนาม: ตระกูล Playwrite ที่ออกแบบมาสอนเขียนตัวติดในโรงเรียน, ภาษาเอเชีย: ฟอนต์ลายมือของภาษานั้น
+// เฉพาะภาษาอังกฤษ: Playwrite US Trad ฟอนต์ที่ออกแบบมาสอนเขียนตัวติด (cursive) ในโรงเรียน
 const HAND_FONT = {
   en: { family: "Playwrite US Trad", note: "ตัวเขียนติดแบบที่สอนในโรงเรียนอเมริกา" },
-  vi: { family: "Playwrite VN", note: "ตัวเขียนตามแบบลายมือทางการของเวียดนาม" },
-  ko: { family: "Nanum Pen Script", note: "ลายมือเขียนด้วยปากกา", subset: true },
-  ja: { family: "Klee One", note: "ลายมือแบบตำราเรียน เห็นเส้นขีดชัด", subset: true },
-  zh: { family: "Ma Shan Zheng", note: "ตัวเขียนแบบพู่กันคาย (楷书)", subset: true },
 };
 const _fontLinks = new Map();
 function loadHandFont(lang, text) {
@@ -1401,6 +1405,20 @@ async function doTranslate(text, from) {
 }
 // วาดหน้าแปลใหม่โดยไม่ลบช่องพิมพ์ที่กำลังใช้
 function renderTranslateSoft() { if (cleanup) { cleanup(); cleanup = null; } renderTranslate(); }
+
+/* ---------- ติดตั้งเป็นแอพ (PWA) และสถานะออฟไลน์ ---------- */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  if (current === "home") go("home");
+});
+window.addEventListener("appinstalled", () => { installPrompt = null; toast("ติดตั้งแอพแล้ว 🎉 เปิดได้จากไอคอนบนหน้าจอ"); if (current === "home") go("home"); });
+window.addEventListener("offline", () => toast("ออฟไลน์อยู่: แฟลชการ์ด ควิซ เขียน ใช้ได้ ส่วน AI ต้องใช้เน็ต"));
+window.addEventListener("online", () => toast("กลับมาออนไลน์แล้ว"));
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
 
 /* =========================================================
    เริ่มแอพ
