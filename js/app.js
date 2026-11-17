@@ -888,21 +888,20 @@ function renderWrite() {
       ${trace ? `<button class="chip ${S.wGuide ? "sel" : ""}" id="guide">เส้นนำ ${S.wGuide ? "เปิด" : "ปิด"}</button>` : ""}
     </div>
     ${trace ? `
-      <div class="card row" style="margin-bottom:10px">
+      <div class="card row" style="margin-bottom:10px;padding:10px 14px">
         <div class="grow">
           <div class="target-word">${esc(w.w)}</div>
           ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
           <div class="muted small">${esc(w.th)}</div>
         </div>
         <button class="icon-btn" id="sayW" aria-label="ฟังเสียง">🔊</button>
-      </div>` : `
-      <p class="sub" style="margin:0 0 10px">เขียนคำ (ภาษาไหนก็ได้) หรือวาดรูป แล้วกด "อ่าน/ทาย" AI จะบอกว่าเป็นคำอะไร ภาษา${LANG_META[L].name}พูดว่าอะไร</p>`}
+      </div>` : ""}
     <div class="board-wrap" id="wrap">
       <div class="board-grid"></div>
       ${trace && S.wGuide ? `<div class="board-ghost" id="ghost">${esc(w.w)}</div>` : ""}
       <canvas id="board" aria-label="กระดานเขียน"></canvas>
     </div>
-    <div class="tools">
+    <div class="tools" id="tools">
       <button class="icon-btn sel" data-tool="pen" aria-label="ปากกา">✏️</button>
       <button class="icon-btn" data-tool="eraser" aria-label="ยางลบ">🧽</button>
       <button class="icon-btn" id="undo" aria-label="ย้อนกลับ">↶</button>
@@ -911,7 +910,7 @@ function renderWrite() {
         ${[3, 6, 10].map((sz, i) => `<button class="dot ${i === 1 ? "sel" : ""}" data-size="${sz}" aria-label="ขนาด ${sz}"><i style="width:${sz + 2}px;height:${sz + 2}px"></i></button>`).join("")}
       </div>
     </div>
-    <div class="row" style="margin-top:12px">
+    <div class="row" id="wbtns" style="margin-top:12px">
       ${trace ? `<button class="btn grow" id="nextW">คำถัดไป ▶</button>` : ""}
       <button class="btn primary grow" id="check">${trace ? "✅ ตรวจลายมือ" : "🔍 อ่าน/ทาย"}</button>
     </div>
@@ -923,6 +922,11 @@ function renderWrite() {
   const strokes = []; // { tool, size, pts: [[x,y,pressure]] }
   let tool = "pen", size = 6, cur = null;
   const fit = () => {
+    // ความสูงกระดาน: เท่าที่เหลือบนจอ เพื่อให้ปุ่มเครื่องมือและปุ่มตรวจมองเห็นได้โดยไม่ต้องเลื่อน
+    const top = canvas.getBoundingClientRect().top + window.scrollY;
+    const below = ($view.querySelector("#tools")?.offsetHeight || 44) + ($view.querySelector("#wbtns")?.offsetHeight || 48) + 30;
+    const bar = document.querySelector(".tabbar")?.offsetHeight || 64;
+    canvas.style.height = Math.max(150, Math.min(360, window.innerHeight - top - below - bar)) + "px";
     const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
