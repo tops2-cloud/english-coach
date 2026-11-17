@@ -2,6 +2,7 @@ import { LEVELS, VOCAB, QUIZ, PHRASES, TUTOR_MODES, LANG_META, PARTNER_UI } from
 import { LANG_CONTENT } from "./data-langs.js";
 import { EN_INTER, LANG_INTER } from "./data-inter.js";
 import { JA_EXTRA, JA_KANA_MAP, JA_KANA_OPENERS } from "./data-ja.js";
+import { CHARTS } from "./data-chart.js";
 
 // ระดับกลางของภาษาอังกฤษใช้โครงเดียวกับระดับอื่น
 VOCAB.intermediate = EN_INTER.vocab;
@@ -200,12 +201,13 @@ function listen({ onResult, onEnd, onError, lang = "en" }) {
    ========================================================= */
 let current = "home";
 let cleanup = null;
-const tabs = { home: renderHome, vocab: renderPractice, quiz: renderQuiz, tutor: renderTutor, profile: renderProfile, translate: renderTranslate };
-const NAV_OF = { profile: "home" };
+const tabs = { home: renderHome, vocab: renderPractice, quiz: renderQuiz, tutor: renderTutor, profile: renderProfile, translate: renderTranslate, chart: renderChart };
+const NAV_OF = { profile: "home", chart: "home" };
 
 function go(tab) {
   // ลิงก์เก่า/ปุ่มลัด "speak" และ "write" ไปที่แท็บฝึกคำ แล้วเปิดแท็บย่อยนั้น
   if (tab === "speak" || tab === "write" || tab === "cards") { S.pMode = tab; save(); tab = "vocab"; }
+  if (tab === "chart" && current !== "chart") { S.chartLang = ""; S.chartTab = ""; }
   if (tab === "dict" || tab === "talk") { S.trMode = tab === "dict" ? "type" : "face"; save(); tab = "translate"; }
   if (cleanup) { cleanup(); cleanup = null; }
   $view = MAIN_VIEW;
@@ -283,6 +285,7 @@ function homeShortcuts(due) {
     { go: "cards", icon: "🃏", label: "ทบทวนคำ", badge: due },
     { go: "speak", icon: "🎤", label: "ฟัง-พูด" },
     { go: "write", icon: "✍️", label: "ฝึกเขียน" },
+    { go: "chart", icon: "🔤", label: "ตัวอักษร" },
     { go: "quiz", icon: "✅", label: "ควิซ" },
     { go: "tutor", icon: "🤖", label: "ครู AI" },
     { go: "talk", icon: "🌐", label: "แปลคุยกัน" },
@@ -1197,6 +1200,41 @@ function renderWrite() {
       btn.disabled = false;
     }
   });
+}
+
+/* =========================================================
+   🔤 ตารางตัวอักษร พร้อมคำอ่าน (แตะเพื่อฟังเสียง)
+   ========================================================= */
+function renderChart() {
+  const L = S.chartLang && CHARTS[S.chartLang] ? S.chartLang : S.lang;
+  const tabs = CHARTS[L];
+  // ญี่ปุ่น: ถ้ากำลังเรียนชุดคาตาคานะ เปิดแท็บคาตาคานะให้ก่อน
+  const defTab = L === "ja" && langLevel("ja") === "kata" ? "kata" : tabs[0].id;
+  const tid = tabs.some((t) => t.id === S.chartTab) ? S.chartTab : defTab;
+  const tab = tabs.find((t) => t.id === tid);
+  const flags = ["en", "ko", "ja", "zh", "vi"];
+  $view.innerHTML = `
+    <div class="lang-chips">${flags.map((k) => `<button class="chip lang-chip ${k === L ? "sel" : ""}" data-cl="${k}">${LANG_META[k].flag} ${LANG_META[k].abbr}</button>`).join("")}</div>
+    ${tabs.length > 1 ? `<div class="seg seg2" style="margin-bottom:6px">${tabs.map((t) => `<button data-ct="${t.id}" class="${t.id === tid ? "sel" : ""}">${t.name}</button>`).join("")}</div>` : ""}
+    <p class="muted small" style="margin:6px 0 4px">แตะตัวอักษรเพื่อฟังเสียง</p>
+    ${tab.sections.map((sec) => `
+      <h2 class="sm">${esc(sec.title)}</h2>
+      <div class="kgrid" style="grid-template-columns:repeat(${sec.cols},1fr)">
+        ${sec.cells.map((c, i) => c ? `
+          <button class="kcell" data-say="${esc(c.say)}">
+            <span class="c">${esc(c.c)}</span>
+            <span class="r">${esc(c.r)}</span>
+            <span class="t">${esc(c.th)}</span>
+          </button>` : `<span class="kcell empty"></span>`).join("")}
+      </div>`).join("")}
+    ${tab.notes && tab.notes.length ? `<div class="card stack" style="margin-top:14px">${tab.notes.map((n) => `<div class="small">💡 ${esc(n)}</div>`).join("")}</div>` : ""}`;
+  $view.querySelectorAll(".kcell[data-say]").forEach((b) => b.addEventListener("click", () => {
+    speak(b.dataset.say, 0.75, L);
+    $view.querySelectorAll(".kcell.hit").forEach((x) => x.classList.remove("hit"));
+    b.classList.add("hit");
+  }));
+  $view.querySelectorAll("[data-cl]").forEach((b) => b.addEventListener("click", () => { S.chartLang = b.dataset.cl; S.chartTab = ""; save(); renderChart(); }));
+  $view.querySelectorAll("[data-ct]").forEach((b) => b.addEventListener("click", () => { S.chartTab = b.dataset.ct; save(); renderChart(); }));
 }
 
 /* =========================================================

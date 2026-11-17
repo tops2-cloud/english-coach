@@ -345,3 +345,14 @@ h2.sm { margin: 12px 0 6px; }
 .week.sm { height: 54px; }
 .week.sm .bar span { font-size: 11px; }
 .stats4 .card { padding: 6px 4px; }
+
+/* ---------- character chart ---------- */
+.kgrid { display: grid; gap: 6px; }
+.kcell { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 6px 2px 5px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 70px; line-height: 1.15; }
+.kcell .c { font-size: 26px; font-weight: 500; }
+.kcell .r { font-size: 12px; color: var(--brand); margin-top: 2px; text-align: center; }
+.kcell .t { font-size: 11px; color: var(--muted); text-align: center; }
+.kcell.empty { visibility: hidden; }
+.kcell.hit { background: var(--brand-soft); border-color: var(--brand); }
+.kcell:active { transform: scale(.95); }

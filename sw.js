@@ -2,11 +2,11 @@
 // - ไฟล์ของแอพ: ดึงจากเน็ตก่อน (ได้เวอร์ชันล่าสุดเสมอ) ถ้าไม่มีเน็ตใช้ตัวที่เก็บไว้ในเครื่อง
 // - ฟอนต์จาก Google Fonts: เก็บไว้ในเครื่องหลังโหลดครั้งแรก
 // - /api/ (AI): ไม่เก็บ ต้องใช้เน็ตเสมอ
-const APP_CACHE = "lc-app-v2";
+const APP_CACHE = "lc-app-v3";
 const FONT_CACHE = "lc-fonts-v1";
 const SHELL = [
   "/", "/index.html", "/css/style.css", "/manifest.json",
-  "/js/app.js", "/js/data.js", "/js/data-langs.js", "/js/data-inter.js", "/js/data-ja.js",
+  "/js/app.js", "/js/data.js", "/js/data-langs.js", "/js/data-inter.js", "/js/data-ja.js", "/js/data-chart.js",
   "/icons/icon-192.png", "/icons/icon-512.png",
 ];
 
