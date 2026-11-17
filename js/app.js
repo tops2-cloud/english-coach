@@ -155,7 +155,7 @@ const NAV_OF = { profile: "home" };
 function go(tab) {
   // ลิงก์เก่า/ปุ่มลัด "speak" และ "write" ไปที่แท็บฝึกคำ แล้วเปิดแท็บย่อยนั้น
   if (tab === "speak" || tab === "write" || tab === "cards") { S.pMode = tab; save(); tab = "vocab"; }
-  if (tab === "dict" || tab === "talk") { S.trMode = tab === "dict" ? "dict" : "face"; save(); tab = "translate"; }
+  if (tab === "dict" || tab === "talk") { S.trMode = tab === "dict" ? "type" : "face"; save(); tab = "translate"; }
   if (cleanup) { cleanup(); cleanup = null; }
   $view = MAIN_VIEW;
   if (window.speechSynthesis) speechSynthesis.cancel();
@@ -218,7 +218,7 @@ function homeShortcuts(due) {
     { go: "quiz", icon: "✅", label: "ควิซ" },
     { go: "tutor", icon: "🤖", label: "ครู AI" },
     { go: "talk", icon: "🌐", label: "แปลคุยกัน" },
-    { go: "dict", icon: "📖", label: "ค้นคำ" },
+    { go: "dict", icon: "📖", label: "ค้นคำ/แปล" },
     { go: "profile", icon: "👤", label: "โปรไฟล์" },
   ];
 }
@@ -1121,15 +1121,27 @@ function renderWrite() {
 /* =========================================================
    7) แปลภาษา (คุยต่อหน้า / พิมพ์)
    ========================================================= */
-let trLog = [];       // { from: "th"|partner, src, dst, reading }
+// รายการในหน้าแปล: แต่ละรายการเก็บได้ทั้งผลแปล (dst) และผลพจนานุกรม (dict) แล้วเลือกแสดงตาม view
+// { src, from: "th"|partner, dst, reading, dict: {entries, note_th}, view: "tr"|"dict", busy }
+let trLog = [];
 let trBusy = false;
-let dictRes = null;   // ผลค้นคำล่าสุด
-let dictBusy = false;
+
+// คำเดียว/วลีสั้น → แสดงแบบพจนานุกรม, ประโยค → แสดงคำแปล
+function isShortQuery(text, P) {
+  const s = text.trim();
+  const words = s.split(/\s+/).filter(Boolean);
+  if (/[,，、;:]/.test(s)) return false;
+  if (/[.!?。！？]$/.test(s) && words.length > 1) return false;
+  if (hasThai(s)) return words.length <= 2 && s.replace(/\s/g, "").length <= 14;
+  if (/[぀-ヿ㐀-鿿]/.test(s)) return words.length === 1 && s.length <= 6; // ญี่ปุ่น/จีน ไม่เว้นวรรค
+  if (P === "vi") return words.length <= 4; // เวียดนามเว้นวรรคทุกพยางค์
+  return words.length <= 3;
+}
+
 function renderTranslate() {
   if (!S.partner) S.partner = "en";
-  if (!S.trMode) S.trMode = "face";
+  if (!S.trMode || S.trMode === "dict") S.trMode = S.trMode === "dict" ? "type" : "face";
   if (!S.saved) S.saved = [];
-  if (!S.dictHist) S.dictHist = [];
   const P = S.partner, PM = LANG_META[P], PU = PARTNER_UI[P];
   let rec = null;
   cleanup = () => { try { rec && rec.abort(); } catch (e) {} };
@@ -1137,10 +1149,9 @@ function renderTranslate() {
   const chips = Object.keys(PARTNER_UI).map((k) => `<button class="chip lang-chip ${k === P ? "sel" : ""}" data-p="${k}" aria-label="${LANG_META[k].name}">${LANG_META[k].flag} ${LANG_META[k].abbr}</button>`).join("");
   const header = `
     <div class="lang-chips">${chips}</div>
-    <div class="seg" style="margin-bottom:10px">
+    <div class="seg seg2" style="margin-bottom:10px">
       <button data-mode="face" class="${S.trMode === "face" ? "sel" : ""}">🗣️ คุยต่อหน้า</button>
-      <button data-mode="type" class="${S.trMode === "type" ? "sel" : ""}">⌨️ พิมพ์แปล</button>
-      <button data-mode="dict" class="${S.trMode === "dict" ? "sel" : ""}">📖 ค้นคำ</button>
+      <button data-mode="type" class="${S.trMode === "type" ? "sel" : ""}">⌨️ พิมพ์ (แปล/ค้นคำ)</button>
     </div>`;
 
   const line = (t, side) => {
@@ -1157,7 +1168,7 @@ function renderTranslate() {
 
   if (S.trMode === "face") {
     $view.classList.add("tr-face");
-    const last = trLog.slice(-3);
+    const last = trLog.filter((t) => t.dst).slice(-3);
     $view.innerHTML = header + `
       <div class="face">
         <div class="panel them">
@@ -1191,33 +1202,66 @@ function renderTranslate() {
     };
     bindMic("#micThem", P);
     bindMic("#micMe", "th");
-    $view.querySelector("#toType").addEventListener("click", () => { S.trMode = "type"; save(); renderTranslate(); });
-  } else if (S.trMode === "dict") {
-    $view.innerHTML = header;
-    renderDict(P, PM, (r) => { rec = r; });
+    $view.querySelector("#toType").addEventListener("click", () => { S.trMode = "type"; save(); go("translate"); });
   } else {
+    // ---------- ⌨️ พิมพ์: แปลประโยค + ค้นคำ ในช่องเดียว ----------
     $view.classList.add("has-composer");
+    const isSaved = (w) => S.saved.some((x) => x.text === w);
+    const dictCard = (t, i) => `
+      ${t.dict.entries.map((e, j) => `
+        <div class="card stack dict-entry">
+          <div class="row" style="align-items:flex-start">
+            <div class="grow">
+              <div class="dict-word">${esc(e.word)}</div>
+              ${e.reading ? `<div class="reading">${esc(e.reading)}</div>` : ""}
+              ${e.thai_sound ? `<div class="small">อ่านว่า <b>${esc(e.thai_sound)}</b></div>` : ""}
+            </div>
+            <button class="icon-btn" data-i="${i}" data-j="${j}" data-act="dsay" aria-label="ฟังเสียง">🔊</button>
+            <button class="icon-btn" data-i="${i}" data-j="${j}" data-act="dstar" aria-label="บันทึก">${isSaved(e.word) ? "⭐" : "☆"}</button>
+          </div>
+          <div>${e.pos ? `<span class="pill">${esc(e.pos)}</span> ` : ""}<b style="font-size:18px">${esc(e.meaning_th)}</b></div>
+          ${e.examples.length ? `<div class="stack" style="border-top:1px dashed var(--line);padding-top:10px">${e.examples.map((x) => `
+            <div>
+              <div><button class="say" data-say="${esc(x.text)}" data-lang="${P}" style="padding:0 6px 0 0">🔊</button>${esc(x.text)}</div>
+              ${x.reading ? `<div class="reading small">${esc(x.reading)}</div>` : ""}
+              <div class="muted small">${esc(x.th)}</div>
+            </div>`).join("")}</div>` : ""}
+        </div>`).join("")}
+      ${t.dict.note_th ? `<div class="explain" style="margin-top:8px">💡 ${esc(t.dict.note_th)}</div>` : ""}`;
+
+    const item = (t, i) => {
+      if (t.busy && !t.dst && !t.dict) return `<div class="msg me">${esc(t.src)}</div><div class="msg bot typing">กำลังหา...</div>`;
+      const toggle = `<button class="linkbtn" data-i="${i}" data-act="toggle">${t.busy ? "กำลังโหลด..." : t.view === "dict" ? "🔁 ดูแบบคำแปล" : "📖 ดูแบบพจนานุกรม"}</button>`;
+      if (t.view === "dict" && t.dict) {
+        return `<div class="msg me">${esc(t.src)}</div>
+          <div class="dict-wrap">${dictCard(t, i)}<div class="tr-actions">${toggle}</div></div>`;
+      }
+      return `
+        <div class="msg tr ${t.from === "th" ? "me" : "bot"}" style="max-width:92%">
+          <div class="small" style="opacity:.75">${esc(t.src)}</div>
+          <div style="font-size:18px;font-weight:600;margin-top:2px">${esc(t.dst)}</div>
+          ${t.reading ? `<div class="small" style="opacity:.8">${esc(t.reading)}</div>` : ""}
+          <div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap">
+            <button class="say" data-i="${i}" data-act="say">🔊</button>
+            <button class="say" data-i="${i}" data-act="star">⭐</button>
+            <button class="say" data-i="${i}" data-act="copy">📋</button>
+          </div>
+        </div>
+        <div class="tr-actions ${t.from === "th" ? "right" : ""}">${toggle}</div>`;
+    };
+
     $view.innerHTML = header + `
       <div class="chat">
-        ${trLog.length ? trLog.map((t, i) => `
-          <div class="msg tr ${t.from === "th" ? "me" : "bot"}" style="max-width:92%">
-            <div class="small" style="opacity:.75">${esc(t.src)}</div>
-            <div style="font-size:18px;font-weight:600;margin-top:2px">${esc(t.dst)}</div>
-            ${t.reading ? `<div class="small" style="opacity:.8">${esc(t.reading)}</div>` : ""}
-            <div class="row" style="gap:4px;margin-top:4px">
-              <button class="say" data-i="${i}" data-act="say">🔊</button>
-              <button class="say" data-i="${i}" data-act="star">⭐</button>
-              <button class="say" data-i="${i}" data-act="copy">📋</button>
-            </div>
-          </div>`).join("") : `<div class="card empty"><div class="e">🌐</div><p class="muted">พิมพ์ภาษาไทยหรือ${PM.name} แล้วแอพจะแปลไปอีกฝั่งให้อัตโนมัติ</p></div>`}
-        ${trBusy ? `<div class="msg bot typing">กำลังแปล...</div>` : ""}
+        ${trLog.length ? trLog.map(item).join("") : `<div class="card empty"><div class="e">🌐</div><p class="muted">พิมพ์ภาษาไทยหรือ${PM.name}<br>• คำเดียว/วลีสั้น → ได้ความหมาย คำอ่าน ตัวอย่าง (แบบพจนานุกรม)<br>• ประโยค → ได้คำแปลไปอีกฝั่ง</p></div>`}
       </div>
-      ${S.saved.length ? `<h2>⭐ ประโยคที่บันทึกไว้</h2><div class="card" style="padding:4px 16px">${S.saved.map((x, i) => `
+      ${S.saved.length ? `<h2>⭐ ที่บันทึกไว้</h2><div class="card" style="padding:4px 16px">${S.saved.map((x, i) => `
         <div class="row" style="padding:10px 0;border-bottom:1px solid var(--line)">
           <button class="say" data-si="${i}" data-act="ssay" style="font-size:18px">🔊</button>
           <div class="grow"><b>${esc(x.text)}</b>${x.reading ? `<div class="small muted">${esc(x.reading)}</div>` : ""}<div class="small muted">${LANG_META[x.lang].flag} ${esc(x.th)}</div></div>
           <button class="say" data-si="${i}" data-act="sdel" aria-label="ลบ">🗑️</button>
         </div>`).join("")}</div>` : ""}`;
+    bindSay();
+
     const items = (i) => trLog[+i];
     $view.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
       const act = b.dataset.act;
@@ -1226,23 +1270,48 @@ function renderTranslate() {
       if (act === "star") {
         const t = items(b.dataset.i);
         const fx = t.from === "th" ? { lang: P, text: t.dst, reading: t.reading, th: t.src } : { lang: P, text: t.src, reading: "", th: t.dst };
-        if (!S.saved.some((x) => x.text === fx.text)) { S.saved.unshift(fx); S.saved = S.saved.slice(0, 100); save(); toast("บันทึกประโยคแล้ว ⭐"); renderTranslate(); }
+        if (!S.saved.some((x) => x.text === fx.text)) { S.saved.unshift(fx); S.saved = S.saved.slice(0, 100); save(); toast("บันทึกแล้ว ⭐"); renderTranslateSoft(); }
         else toast("บันทึกไว้แล้ว");
       }
+      if (act === "dsay") { const e = items(b.dataset.i).dict.entries[+b.dataset.j]; speak(e.word, 0.8, P); }
+      if (act === "dstar") {
+        const e = items(b.dataset.i).dict.entries[+b.dataset.j];
+        const k = S.saved.findIndex((x) => x.text === e.word);
+        if (k >= 0) { S.saved.splice(k, 1); toast("เอาออกจากที่บันทึกแล้ว"); }
+        else { S.saved.unshift({ lang: P, text: e.word, reading: e.reading || e.thai_sound, th: e.meaning_th }); S.saved = S.saved.slice(0, 100); toast("บันทึกคำแล้ว ⭐"); }
+        save(); renderTranslateSoft();
+      }
+      if (act === "toggle") toggleView(+b.dataset.i);
       if (act === "ssay") { const x = S.saved[+b.dataset.si]; speak(x.text, 0.9, x.lang); }
-      if (act === "sdel") { S.saved.splice(+b.dataset.si, 1); save(); renderTranslate(); }
+      if (act === "sdel") { S.saved.splice(+b.dataset.si, 1); save(); renderTranslateSoft(); }
     }));
+
     if (!document.querySelector(".composer")) {
       const c = document.createElement("div");
       c.className = "composer";
       c.innerHTML = `<div class="inner">
-        <textarea id="trIn" rows="1" placeholder="พิมพ์ไทย หรือ ${PM.name}"></textarea>
+        <button class="icon-btn" id="trMic" aria-label="พูดภาษา${PM.name}">🎤</button>
+        <textarea id="trIn" rows="1" placeholder="พิมพ์คำ/ประโยค ไทย หรือ ${PM.name}"></textarea>
         <button class="icon-btn" id="trSend" aria-label="แปล" style="background:var(--brand);color:#fff;border-color:var(--brand)">➤</button>
       </div>`;
       document.body.appendChild(c);
       const ta = c.querySelector("#trIn");
+      const send = () => { const t = ta.value.trim(); if (!t) return; ta.value = ""; ta.style.height = "auto"; doTypeQuery(t); };
       ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(120, ta.scrollHeight) + "px"; });
-      c.querySelector("#trSend").addEventListener("click", () => { const t = ta.value.trim(); if (!t || trBusy) return; ta.value = ""; ta.style.height = "auto"; doTranslate(t, null); });
+      ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+      c.querySelector("#trSend").addEventListener("click", send);
+      const mic = c.querySelector("#trMic");
+      mic.addEventListener("click", () => {
+        if (!SR) { toast("ใช้ Chrome บน Android เพื่อใช้ไมค์"); return; }
+        if (rec) { rec.stop(); return; }
+        mic.style.background = "var(--accent)";
+        rec = listen({
+          lang: P,
+          onResult: (alts) => { ta.value = alts[0]; ta.dispatchEvent(new Event("input")); },
+          onError: (err) => toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : "ไม่ได้ยินเสียง ลองใหม่"),
+          onEnd: () => { rec = null; mic.style.background = ""; },
+        });
+      });
     }
     requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
   }
@@ -1251,92 +1320,61 @@ function renderTranslate() {
   $view.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => { S.trMode = b.dataset.mode; save(); go("translate"); }));
 }
 
-/* ---------- ค้นคำ: ความหมาย คำอ่าน เสียงอ่าน ตัวอย่าง ---------- */
-function renderDict(P, PM, setRec) {
-  const r = dictRes && dictRes.partner === P ? dictRes : null;
-  const isSaved = (w) => S.saved.some((x) => x.text === w);
-  $view.innerHTML += `
-    <div class="card" style="padding:10px">
-      <div class="row" style="gap:8px">
-        <input class="field grow" id="dictIn" placeholder="พิมพ์คำ${PM.name} หรือคำไทย" maxlength="120" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" />
-        <button class="icon-btn" id="dictMic" aria-label="พูดคำ${PM.name}">🎤</button>
-        <button class="icon-btn" id="dictGo" aria-label="ค้น" style="background:var(--brand);color:#fff;border-color:var(--brand)">🔍</button>
-      </div>
-    </div>
-    <div id="dictOut" style="margin-top:12px">
-      ${dictBusy ? `<div class="card center muted">กำลังค้น...</div>` : r ? `
-        ${r.entries.map((e, i) => `
-          <div class="card stack dict-entry">
-            <div class="row" style="align-items:flex-start">
-              <div class="grow">
-                <div class="dict-word">${esc(e.word)}</div>
-                ${e.reading ? `<div class="reading">${esc(e.reading)}</div>` : ""}
-                ${e.thai_sound ? `<div class="small">อ่านว่า <b>${esc(e.thai_sound)}</b></div>` : ""}
-              </div>
-              <button class="icon-btn" data-dsay="${i}" aria-label="ฟังเสียง">🔊</button>
-              <button class="icon-btn" data-dstar="${i}" aria-label="บันทึก">${isSaved(e.word) ? "⭐" : "☆"}</button>
-            </div>
-            <div>${e.pos ? `<span class="pill">${esc(e.pos)}</span> ` : ""}<b style="font-size:18px">${esc(e.meaning_th)}</b></div>
-            ${e.examples.length ? `<div class="stack" style="border-top:1px dashed var(--line);padding-top:10px">${e.examples.map((x) => `
-              <div>
-                <div><button class="say" data-say="${esc(x.text)}" data-lang="${P}" style="padding:0 6px 0 0">🔊</button>${esc(x.text)}</div>
-                ${x.reading ? `<div class="reading small">${esc(x.reading)}</div>` : ""}
-                <div class="muted small">${esc(x.th)}</div>
-              </div>`).join("")}</div>` : ""}
-          </div>`).join("")}
-        ${r.note_th ? `<div class="explain" style="margin-top:12px">💡 ${esc(r.note_th)}</div>` : ""}
-      ` : `<div class="card empty"><div class="e">📖</div><p class="muted">พิมพ์คำ${PM.name}เพื่อดูความหมายและวิธีออกเสียง<br>หรือพิมพ์คำไทยเพื่อดูว่า${PM.name}พูดว่าอะไร</p></div>`}
-    </div>
-    ${S.dictHist.length ? `<h2>ค้นล่าสุด</h2><div class="row" style="flex-wrap:wrap;gap:6px">${S.dictHist.filter((h) => h.p === P).slice(0, 15).map((h) => `<button class="chip" data-hist="${esc(h.q)}">${esc(h.q)}</button>`).join("")}</div>` : ""}`;
-
-  const inp = $view.querySelector("#dictIn");
-  const goSearch = () => { const t = inp.value.trim(); if (t && !dictBusy) doLookup(t); };
-  $view.querySelector("#dictGo").addEventListener("click", goSearch);
-  inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); goSearch(); } });
-  $view.querySelectorAll("[data-hist]").forEach((b) => b.addEventListener("click", () => doLookup(b.dataset.hist)));
-  if (r) {
-    $view.querySelectorAll("[data-dsay]").forEach((b) => b.addEventListener("click", () => speak(r.entries[+b.dataset.dsay].word, 0.8, P)));
-    $view.querySelectorAll("[data-dstar]").forEach((b) => b.addEventListener("click", () => {
-      const e = r.entries[+b.dataset.dstar];
-      const i = S.saved.findIndex((x) => x.text === e.word);
-      if (i >= 0) { S.saved.splice(i, 1); toast("เอาออกจากที่บันทึกแล้ว"); }
-      else { S.saved.unshift({ lang: P, text: e.word, reading: e.reading || e.thai_sound, th: e.meaning_th }); S.saved = S.saved.slice(0, 100); toast("บันทึกคำแล้ว ⭐ ดูได้ที่ ⌨️ พิมพ์แปล"); }
-      save(); renderTranslateSoft();
-    }));
-    bindSay();
+// ดึงผลแบบคำแปลหรือพจนานุกรมให้รายการ t (ถ้ามีแล้วไม่ดึงซ้ำ)
+async function fetchView(t, view) {
+  const P = S.partner;
+  if (view === "dict" && !t.dict) {
+    const d = await api({ action: "lookup", text: t.src, partner: P });
+    t.dict = { entries: d.entries, note_th: d.note_th };
+    if (!t.from) t.from = d.direction === "from_th" ? "th" : P;
   }
-  const mic = $view.querySelector("#dictMic");
-  mic.addEventListener("click", () => {
-    if (!SR) { toast("ใช้ Chrome บน Android เพื่อใช้ไมค์"); return; }
-    mic.classList.add("on"); mic.style.background = "var(--accent)";
-    setRec(listen({
-      lang: P,
-      onResult: (alts) => { inp.value = alts[0]; doLookup(alts[0]); },
-      onError: (err) => toast(err === "not-allowed" ? "กรุณาอนุญาตให้ใช้ไมโครโฟน" : "ไม่ได้ยินเสียง ลองใหม่"),
-      onEnd: () => { mic.classList.remove("on"); mic.style.background = ""; },
-    }));
-  });
-  if (!r && !dictBusy) inp.focus({ preventScroll: true });
+  if (view === "tr" && !t.dst) {
+    const d = await api({ action: "translate", text: t.src, partner: P });
+    t.from = d.detected === "th" ? "th" : P;
+    t.dst = d.translation; t.reading = d.reading;
+  }
 }
 
-async function doLookup(text) {
+// ⌨️ พิมพ์: เลือกแบบให้อัตโนมัติ (คำสั้น → พจนานุกรม, ประโยค → คำแปล)
+async function doTypeQuery(text) {
   const P = S.partner;
-  dictBusy = true;
+  const t = { src: text, view: isShortQuery(text, P) ? "dict" : "tr", busy: true };
+  trLog.push(t); trLog = trLog.slice(-50);
   if (current === "translate") renderTranslateSoft();
   try {
-    const d = await api({ action: "lookup", text, partner: P });
-    dictRes = d;
-    S.dictHist = [{ q: text, p: P }, ...S.dictHist.filter((h) => !(h.q === text && h.p === P))].slice(0, 40);
-    save(); addXP(1);
-    dictBusy = false;
-    if (current === "translate") { renderTranslateSoft(); if (d.entries[0]) speak(d.entries[0].word, 0.8, P); }
+    await fetchView(t, t.view);
+    addXP(1);
+    t.busy = false;
+    if (current === "translate") {
+      renderTranslateSoft();
+      if (t.view === "dict" && t.dict.entries[0]) speak(t.dict.entries[0].word, 0.8, P);
+      if (t.view === "tr") speak(t.dst, 0.95, t.from === "th" ? P : "th");
+    }
   } catch (e) {
-    dictBusy = false;
+    trLog = trLog.filter((x) => x !== t);
     toast(e.message);
     if (current === "translate") renderTranslateSoft();
   }
 }
 
+async function toggleView(i) {
+  const t = trLog[i];
+  if (!t || t.busy) return;
+  const next = t.view === "dict" ? "tr" : "dict";
+  t.busy = true;
+  renderTranslateSoft();
+  try {
+    await fetchView(t, next);
+    t.view = next;
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    t.busy = false;
+    if (current === "translate") renderTranslateSoft();
+  }
+}
+
+// 🗣️ คุยต่อหน้า: แปลเสียงพูดเสมอ
 async function doTranslate(text, from) {
   const P = S.partner;
   trBusy = true;
@@ -1344,7 +1382,7 @@ async function doTranslate(text, from) {
   try {
     const d = await api({ action: "translate", text, partner: P, from: from || undefined });
     const src = d.detected === "th" ? "th" : P;
-    trLog.push({ from: src, src: text, dst: d.translation, reading: d.reading });
+    trLog.push({ from: src, src: text, dst: d.translation, reading: d.reading, view: "tr" });
     trLog = trLog.slice(-50);
     addXP(1);
     trBusy = false;
