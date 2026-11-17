@@ -3,6 +3,7 @@ import { LANG_CONTENT } from "./data-langs.js";
 import { EN_INTER, LANG_INTER } from "./data-inter.js";
 import { JA_EXTRA, JA_KANA_MAP, JA_KANA_OPENERS } from "./data-ja.js";
 import { CHARTS } from "./data-chart.js";
+import { TRAVEL, TRAVEL_CATS, TRAVEL_TH } from "./data-travel.js";
 
 // ระดับกลางของภาษาอังกฤษใช้โครงเดียวกับระดับอื่น
 VOCAB.intermediate = EN_INTER.vocab;
@@ -201,13 +202,15 @@ function listen({ onResult, onEnd, onError, lang = "en" }) {
    ========================================================= */
 let current = "home";
 let cleanup = null;
-const tabs = { home: renderHome, vocab: renderPractice, quiz: renderQuiz, tutor: renderTutor, profile: renderProfile, translate: renderTranslate, chart: renderChart };
-const NAV_OF = { profile: "home", chart: "home" };
+const tabs = { home: renderHome, vocab: renderPractice, quiz: renderQuiz, tutor: renderTutor, profile: renderProfile, translate: renderTranslate, chart: renderChart, travel: renderTravel };
+const NAV_OF = { profile: "home", chart: "home", travel: "home" };
 
 function go(tab) {
   // ลิงก์เก่า/ปุ่มลัด "speak" และ "write" ไปที่แท็บฝึกคำ แล้วเปิดแท็บย่อยนั้น
   if (tab === "speak" || tab === "write" || tab === "cards") { S.pMode = tab; save(); tab = "vocab"; }
   if (tab === "chart" && current !== "chart") { S.chartLang = ""; S.chartTab = ""; }
+  if (tab === "travel" && current !== "travel") S.travelLang = "";
+  document.querySelector(".tv-full")?.remove();
   if (tab === "dict" || tab === "talk") { S.trMode = tab === "dict" ? "type" : "face"; save(); tab = "translate"; }
   if (cleanup) { cleanup(); cleanup = null; }
   $view = MAIN_VIEW;
@@ -290,6 +293,7 @@ function homeShortcuts(due) {
     { go: "tutor", icon: "🤖", label: "ครู AI" },
     { go: "talk", icon: "🌐", label: "แปลคุยกัน" },
     { go: "dict", icon: "📖", label: "ค้นคำ/แปล" },
+    { go: "travel", icon: "✈️", label: "ประโยคเที่ยว" },
     { go: "profile", icon: "👤", label: "โปรไฟล์" },
   ];
 }
@@ -1235,6 +1239,84 @@ function renderChart() {
   }));
   $view.querySelectorAll("[data-cl]").forEach((b) => b.addEventListener("click", () => { S.chartLang = b.dataset.cl; S.chartTab = ""; save(); renderChart(); }));
   $view.querySelectorAll("[data-ct]").forEach((b) => b.addEventListener("click", () => { S.chartTab = b.dataset.ct; save(); renderChart(); }));
+}
+
+/* =========================================================
+   ✈️ ประโยคเอาตัวรอดตอนเที่ยว (แยกตามภาษา)
+   ========================================================= */
+// แปลงข้อมูลแต่ละภาษาเป็น { text: ประโยคจริง (ใช้พูด/ยื่นให้ดู), show: ที่แสดง, read: คำอ่าน, th: อ่านแบบไทย }
+function travelItem(L, key) {
+  const v = TRAVEL[L] && TRAVEL[L][key];
+  if (!v) return null;
+  if (L === "en") return { text: v[0], show: v[0] };
+  if (L === "ko") return { text: v[0], show: v[0], read: v[1] };
+  if (L === "ja") {
+    const kana = S.jaKana !== false;
+    return { text: v[0], show: kana ? v[1] : v[0], alt: kana && /[一-鿿]/.test(v[0]) ? v[0] : "", read: v[2] };
+  }
+  if (L === "zh") return { text: v[0], show: v[0], read: v[1], th: v[2] };
+  if (L === "vi") return { text: v[0], show: v[0], th: v[1] };
+  return null;
+}
+
+function renderTravel() {
+  const L = S.travelLang && TRAVEL[S.travelLang] ? S.travelLang : (TRAVEL[S.lang] ? S.lang : "en");
+  if (!S.saved) S.saved = [];
+  const flags = ["en", "ko", "ja", "zh", "vi"];
+  const cats = TRAVEL_CATS.map((c) => ({ ...c, items: c.keys.map((k) => ({ k, x: travelItem(L, k) })).filter((o) => o.x) }));
+  const isSaved = (t) => S.saved.some((x) => x.text === t);
+  $view.innerHTML = `
+    <div class="lang-chips">${flags.map((k) => `<button class="chip lang-chip ${k === L ? "sel" : ""}" data-tl="${k}">${LANG_META[k].flag} ${LANG_META[k].abbr}</button>`).join("")}</div>
+    <div class="tv-cats">${cats.map((c) => `<button class="chip" data-tc="${c.id}">${c.icon} ${c.name}</button>`).join("")}</div>
+    ${L === "ja" ? `<label class="small muted tv-kana"><input type="checkbox" id="tvKana" ${S.jaKana !== false ? "checked" : ""}> แสดงเป็นคานะ (ไม่มีคันจิ)</label>` : ""}
+    <p class="muted small" style="margin:4px 0 2px">🔊 ฟังเสียง · 📱 ขยายเต็มจอให้คนท้องถิ่นอ่าน · ⭐ บันทึก</p>
+    ${cats.map((c) => `
+      <h2 class="sm" id="tv-${c.id}">${c.icon} ${c.name}</h2>
+      ${c.items.map(({ k, x }) => `
+        <div class="card tv-card">
+          <div class="tv-th">${esc(TRAVEL_TH[k])}</div>
+          <div class="tv-txt" lang="${L}">${esc(x.show)}</div>
+          ${x.alt ? `<div class="tv-alt" lang="${L}">${esc(x.alt)}</div>` : ""}
+          ${x.read ? `<div class="tv-read">${esc(x.read)}</div>` : ""}
+          ${x.th ? `<div class="tv-thr">🗣️ ${esc(x.th)}</div>` : ""}
+          <div class="tv-btns">
+            <button class="chip" data-tsay="${k}">🔊</button>
+            <button class="chip" data-tshow="${k}">📱 แสดงให้ดู</button>
+            <button class="chip" data-tsave="${k}">${isSaved(x.text) ? "⭐" : "☆"}</button>
+          </div>
+        </div>`).join("")}`).join("")}`;
+  const get = (k) => travelItem(L, k);
+  $view.querySelectorAll("[data-tl]").forEach((b) => b.addEventListener("click", () => { S.travelLang = b.dataset.tl; save(); renderTravel(); }));
+  $view.querySelectorAll("[data-tc]").forEach((b) => b.addEventListener("click", () => {
+    const h = document.getElementById("tv-" + b.dataset.tc);
+    if (h) h.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  const kb = $view.querySelector("#tvKana");
+  if (kb) kb.addEventListener("change", () => { S.jaKana = kb.checked; save(); renderTravel(); });
+  $view.querySelectorAll("[data-tsay]").forEach((b) => b.addEventListener("click", () => speak(get(b.dataset.tsay).text, 0.85, L)));
+  $view.querySelectorAll("[data-tsave]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.tsave, x = get(k);
+    const i = S.saved.findIndex((s) => s.text === x.text);
+    if (i >= 0) { S.saved.splice(i, 1); b.textContent = "☆"; toast("เอาออกแล้ว"); }
+    else { S.saved.unshift({ lang: L, text: x.text, reading: x.read || x.th || "", th: TRAVEL_TH[k] }); S.saved = S.saved.slice(0, 100); b.textContent = "⭐"; toast("บันทึกแล้ว ⭐ (ดูได้ในหน้าแปล)"); }
+    save();
+  }));
+  $view.querySelectorAll("[data-tshow]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.tshow, x = get(k);
+    const ov = document.createElement("div");
+    ov.className = "tv-full";
+    ov.innerHTML = `
+      <div class="tv-full-txt" lang="${L}">${esc(x.text)}</div>
+      ${x.read && L !== "ja" ? `<div class="tv-full-read">${esc(x.read)}</div>` : ""}
+      <div class="tv-full-th">🇹🇭 ${esc(TRAVEL_TH[k])}</div>
+      <div class="tv-full-btns"><button class="btn" data-fs>🔊 เปิดเสียง</button><button class="btn ghost" data-fx>✕ ปิด</button></div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener("click", (e) => {
+      if (e.target.closest("[data-fs]")) { speak(x.text, 0.85, L); return; }
+      close();
+    });
+  }));
 }
 
 /* =========================================================

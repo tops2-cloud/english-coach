@@ -356,3 +356,23 @@ h2.sm { margin: 12px 0 6px; }
 .kcell.empty { visibility: hidden; }
 .kcell.hit { background: var(--brand-soft); border-color: var(--brand); }
 .kcell:active { transform: scale(.95); }
+
+/* ✈️ ประโยคเที่ยว */
+.tv-cats { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.tv-cats .chip { white-space: nowrap; font-size: 13px; padding: 6px 10px; }
+.tv-kana { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; }
+.tv-card { padding: 10px 14px; margin-bottom: 8px; scroll-margin-top: 70px; }
+h2.sm[id^="tv-"] { scroll-margin-top: 70px; }
+.tv-th { font-weight: 700; font-size: 15px; }
+.tv-txt { font-size: 20px; margin-top: 4px; line-height: 1.35; }
+.tv-alt { font-size: 13px; color: var(--muted); }
+.tv-read { font-size: 13px; color: var(--brand); margin-top: 2px; }
+.tv-thr { font-size: 14px; color: var(--text, inherit); margin-top: 2px; }
+.tv-btns { display: flex; gap: 6px; margin-top: 8px; }
+.tv-btns .chip { font-size: 13px; padding: 5px 10px; }
+.tv-full { position: fixed; inset: 0; z-index: 1000; background: #fff; color: #111; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 24px; text-align: center; gap: 16px; }
+.tv-full-txt { font-size: clamp(32px, 10vw, 60px); font-weight: 700; line-height: 1.3; word-break: break-word; }
+.tv-full-read { font-size: 18px; color: #555; }
+.tv-full-th { font-size: 16px; color: #777; }
+.tv-full-btns { display: flex; gap: 10px; margin-top: 10px; }
