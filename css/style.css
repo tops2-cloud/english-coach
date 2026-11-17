@@ -304,3 +304,25 @@ label.stack > * + * { margin-top: 6px; }
 details.tip summary { cursor: pointer; color: var(--brand); font-weight: 600; font-size: 14px; }
 details.tip > div { margin-top: 6px; font-size: 15px; }
 .hand-word > .muted { margin-right: 8px; }
+
+/* ---------- compact home ---------- */
+.hero.compact { padding: 12px 14px; border-radius: 16px; }
+.hero .hi { font-size: 13px; opacity: .92; }
+.hero .streak { font-size: 14px; white-space: nowrap; }
+.hero .xp { font-size: 26px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.hero .xp span { font-size: 13px; font-weight: 500; opacity: .9; margin-left: 2px; }
+h2.sm { font-size: 15px; margin: 16px 0 8px; }
+.apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.apps button { position: relative; border: 1px solid var(--line); background: var(--surface); border-radius: 14px;
+  padding: 10px 2px 8px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 600; line-height: 1.2; min-height: 68px; }
+.apps button:active { transform: scale(.96); }
+.apps .ai { font-size: 24px; line-height: 1; }
+.apps .badge { position: absolute; top: 4px; right: 6px; background: var(--accent); color: #fff; border-radius: 99px;
+  font-size: 11px; font-weight: 700; padding: 1px 6px; min-width: 18px; }
+.week.sm { height: 72px; }
+.stats4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stats4 .card { padding: 8px 4px; text-align: center; }
+.stats4 .n { font-size: 18px; font-weight: 700; line-height: 1.2; }
+.stats4 .l { font-size: 11px; color: var(--muted); line-height: 1.25; }
+.linkbtn { border: 0; background: none; color: var(--muted); font-size: 13px; text-decoration: underline; padding: 8px; }

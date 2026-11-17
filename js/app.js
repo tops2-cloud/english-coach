@@ -155,6 +155,7 @@ const NAV_OF = { profile: "home" };
 function go(tab) {
   // ลิงก์เก่า/ปุ่มลัด "speak" และ "write" ไปที่แท็บฝึกคำ แล้วเปิดแท็บย่อยนั้น
   if (tab === "speak" || tab === "write" || tab === "cards") { S.pMode = tab; save(); tab = "vocab"; }
+  if (tab === "dict" || tab === "talk") { S.trMode = tab === "dict" ? "dict" : "face"; save(); tab = "translate"; }
   if (cleanup) { cleanup(); cleanup = null; }
   $view = MAIN_VIEW;
   if (window.speechSynthesis) speechSynthesis.cancel();
@@ -208,6 +209,20 @@ document.getElementById("levelBtn").addEventListener("click", () => {
 /* =========================================================
    1) หน้าหลัก / ความคืบหน้า
    ========================================================= */
+// ปุ่มลัดในหน้าหลัก: เพิ่มปุ่มใหม่ได้ง่ายๆ โดยเพิ่มรายการในนี้ (go = ปลายทาง, badge = ตัวเลขมุมขวาบน)
+function homeShortcuts(due) {
+  return [
+    { go: "cards", icon: "🃏", label: "ทบทวนคำ", badge: due },
+    { go: "speak", icon: "🎤", label: "ฟัง-พูด" },
+    { go: "write", icon: "✍️", label: "ฝึกเขียน" },
+    { go: "quiz", icon: "✅", label: "ควิซ" },
+    { go: "tutor", icon: "🤖", label: "ครู AI" },
+    { go: "talk", icon: "🌐", label: "แปลคุยกัน" },
+    { go: "dict", icon: "📖", label: "ค้นคำ" },
+    { go: "profile", icon: "👤", label: "โปรไฟล์" },
+  ];
+}
+
 function renderHome() {
   const xpToday = S.days[today()] || 0;
   const pct = Math.min(100, Math.round((xpToday / DAILY_GOAL) * 100));
@@ -221,62 +236,53 @@ function renderHome() {
   const week = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    week.push({ key: today(d), label: ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"][d.getDay()], xp: S.days[today(d)] || 0, isToday: i === 0 });
+    week.push({ label: ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"][d.getDay()], xp: S.days[today(d)] || 0, isToday: i === 0 });
   }
   const max = Math.max(DAILY_GOAL, ...week.map((w) => w.xp));
-
   const nm = S.profile.name;
+
   $view.innerHTML = `
-    <button class="card row profile-card" id="toProfile">
-      <span style="font-size:28px">👤</span>
-      <span class="grow" style="text-align:left">${nm ? `<b>สวัสดี ${esc(nm)}</b><br><span class="muted small">แก้โปรไฟล์ / ดูสิ่งที่ครู AI จำได้</span>` : `<b>ตั้งโปรไฟล์ผู้เรียน</b><br><span class="muted small">ให้ครู AI รู้จักและจำจุดที่คุณผิดบ่อย</span>`}</span>
-      <span class="muted">›</span>
-    </button>
-    <div class="card hero" style="margin-top:12px">
-      <div class="row">
-        <div class="grow">
-          <div class="small" style="opacity:.85">วันนี้ได้</div>
-          <div class="big">${xpToday} <span style="font-size:16px;font-weight:500">/ ${DAILY_GOAL} XP</span></div>
-        </div>
-        <div class="center">
-          <div style="font-size:30px">🔥</div>
-          <div><b>${streak()}</b> วันติด</div>
-        </div>
+    <div class="card hero compact">
+      <div class="row" style="gap:8px">
+        <div class="hi grow">${nm ? `สวัสดี ${esc(nm)} 👋` : "สวัสดี 👋"} · ${deckLabel()}</div>
+        <div class="streak">🔥 <b>${streak()}</b> วัน</div>
       </div>
-      <div class="goalbar"><i style="width:${pct}%"></i></div>
-      <div class="small" style="margin-top:8px;opacity:.9">${pct >= 100 ? "ครบเป้าวันนี้แล้ว เก่งมาก! 🎉" : `อีก ${DAILY_GOAL - xpToday} XP จะครบเป้าวันนี้`}</div>
+      <div class="row" style="gap:10px;margin-top:6px">
+        <div class="xp">${xpToday}<span>/${DAILY_GOAL} XP</span></div>
+        <div class="goalbar grow" style="margin-top:0"><i style="width:${pct}%"></i></div>
+      </div>
+      <div class="hi" style="margin-top:6px">${pct >= 100 ? "ครบเป้าวันนี้แล้ว เก่งมาก! 🎉" : `อีก ${DAILY_GOAL - xpToday} XP จะครบเป้าวันนี้`}</div>
     </div>
 
-    <h2>เริ่มเรียนเลย · <span class="muted" style="font-weight:500">${deckLabel()}</span></h2>
-    <div class="quick">
-      <button data-go="cards"><div class="qi">🃏</div><b>ทบทวนคำศัพท์</b><small>${due ? `ถึงรอบ ${due} คำ` : "ไม่มีคำค้าง"}</small></button>
-      <button data-go="quiz"><div class="qi">✅</div><b>ควิซ</b><small>ข้อละ +5 XP</small></button>
-      <button data-go="speak"><div class="qi">🎤</div><b>ฝึกฟัง-พูด</b><small>ตรวจการออกเสียง</small></button>
-      <button data-go="write"><div class="qi">✍️</div><b>ฝึกเขียน</b><small>เขียนด้วยนิ้วหรือปากกา</small></button>
-      <button data-go="tutor"><div class="qi">🤖</div><b>คุยกับครู AI</b><small>ฝึกสนทนาจริง</small></button>
+    <h2 class="sm">เริ่มเรียนเลย</h2>
+    <div class="apps">
+      ${homeShortcuts(due).map((a) => `
+        <button data-go="${a.go}">
+          ${a.badge ? `<span class="badge">${a.badge}</span>` : ""}
+          <span class="ai">${a.icon}</span><span>${a.label}</span>
+        </button>`).join("")}
     </div>
 
-    <h2>7 วันที่ผ่านมา</h2>
-    <div class="card">
-      <div class="week">
-        ${week.map((w) => `<div class="bar ${w.isToday ? "today" : ""}"><i style="height:${Math.round((w.xp / max) * 85)}%"></i><span>${w.label}</span></div>`).join("")}
+    <h2 class="sm">7 วันที่ผ่านมา</h2>
+    <div class="card" style="padding:10px 12px">
+      <div class="week sm">
+        ${week.map((w) => `<div class="bar ${w.isToday ? "today" : ""}"><i style="height:${Math.round((w.xp / max) * 80)}%"></i><span>${w.label}</span></div>`).join("")}
       </div>
     </div>
 
-    <h2>สถิติรวม</h2>
-    <div class="stats">
-      <div class="card stat"><div class="n">${learned}</div><div class="l">คำที่เคยเรียน</div></div>
-      <div class="card stat"><div class="n">${mastered}</div><div class="l">คำที่จำแม่น (21+ วัน)</div></div>
-      <div class="card stat"><div class="n">${acc}%</div><div class="l">ควิซตอบถูก (${S.quiz.total} ข้อ)</div></div>
-      <div class="card stat"><div class="n">${spk}</div><div class="l">คะแนนออกเสียงเฉลี่ย</div></div>
+    <h2 class="sm">สถิติรวม</h2>
+    <div class="stats4">
+      <div class="card"><div class="n">${learned}</div><div class="l">คำที่เคยเรียน</div></div>
+      <div class="card"><div class="n">${mastered}</div><div class="l">คำที่จำแม่น</div></div>
+      <div class="card"><div class="n">${acc}%</div><div class="l">ควิซถูก (${S.quiz.total} ข้อ)</div></div>
+      <div class="card"><div class="n">${spk}</div><div class="l">ออกเสียงเฉลี่ย</div></div>
     </div>
 
-    <div style="margin-top:24px" class="center">
-      <button class="btn ghost small" id="reset">ล้างข้อมูลการเรียนทั้งหมด</button>
+    <div style="margin-top:18px" class="center">
+      <button class="linkbtn" id="reset">ล้างข้อมูลการเรียนทั้งหมด</button>
     </div>
   `;
   $view.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
-  $view.querySelector("#toProfile").addEventListener("click", () => go("profile"));
   $view.querySelector("#reset").addEventListener("click", () => {
     if (confirm("ล้างความคืบหน้าทั้งหมดในเครื่องนี้? ย้อนกลับไม่ได้")) {
       const lvl = S.level, lng = S.lang, pc = S.passcode, pf = S.profile, ll = S.langLevel; S = defaultState(); S.level = lvl; S.lang = lng; S.passcode = pc; S.profile = pf; S.langLevel = ll; save(); go("home"); toast("ล้างข้อมูลการเรียนแล้ว");
