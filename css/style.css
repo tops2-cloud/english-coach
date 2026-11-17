@@ -333,3 +333,15 @@ h2.sm { font-size: 15px; margin: 16px 0 8px; }
 .tr-actions { margin-top: -4px; }
 .tr-actions.right { align-self: flex-end; }
 .tr-actions .linkbtn { padding: 2px 4px; font-size: 13px; color: var(--brand); text-decoration: none; font-weight: 600; }
+
+/* home: fit on one phone screen */
+.view.home { padding-top: 10px; }
+.hero.compact { padding: 10px 14px; }
+.hero.compact .xp { font-size: 24px; }
+h2.sm { margin: 12px 0 6px; }
+.apps { gap: 6px; }
+.apps button { min-height: 60px; padding: 8px 2px 6px; gap: 3px; }
+.apps .ai { font-size: 22px; }
+.week.sm { height: 54px; }
+.week.sm .bar span { font-size: 11px; }
+.stats4 .card { padding: 6px 4px; }

@@ -162,7 +162,8 @@ function go(tab) {
   if (current === "tutor" && tab !== "tutor") summarizeChat();
   current = tab;
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === (NAV_OF[tab] || tab)));
-  $view.classList.remove("has-composer", "tr-face");
+  $view.classList.remove("has-composer", "tr-face", "home");
+  if (tab === "home") $view.classList.add("home");
   document.querySelector(".composer")?.remove();
   tabs[tab]();
   window.scrollTo(0, 0);
@@ -264,7 +265,7 @@ function renderHome() {
     </div>
 
     <h2 class="sm">7 วันที่ผ่านมา</h2>
-    <div class="card" style="padding:10px 12px">
+    <div class="card" style="padding:8px 12px 6px">
       <div class="week sm">
         ${week.map((w) => `<div class="bar ${w.isToday ? "today" : ""}"><i style="height:${Math.round((w.xp / max) * 80)}%"></i><span>${w.label}</span></div>`).join("")}
       </div>
@@ -274,15 +275,20 @@ function renderHome() {
     <div class="stats4">
       <div class="card"><div class="n">${learned}</div><div class="l">คำที่เคยเรียน</div></div>
       <div class="card"><div class="n">${mastered}</div><div class="l">คำที่จำแม่น</div></div>
-      <div class="card"><div class="n">${acc}%</div><div class="l">ควิซถูก (${S.quiz.total} ข้อ)</div></div>
+      <div class="card"><div class="n">${acc}%</div><div class="l">ควิซถูก</div></div>
       <div class="card"><div class="n">${spk}</div><div class="l">ออกเสียงเฉลี่ย</div></div>
     </div>
 
-    <div style="margin-top:18px" class="center">
+    <div style="margin-top:28px" class="center" id="resetWrap">
       <button class="linkbtn" id="reset">ล้างข้อมูลการเรียนทั้งหมด</button>
     </div>
   `;
   $view.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+  // ดันลิงก์ล้างข้อมูลให้อยู่ใต้ขอบจอ ต้องเลื่อนลงถึงจะเห็น (กันกดโดยไม่ตั้งใจ)
+  const rw = $view.querySelector("#resetWrap");
+  const bar = document.querySelector(".tabbar")?.offsetHeight || 64;
+  const need = window.innerHeight - bar + 24 - rw.getBoundingClientRect().top;
+  if (need > 0) rw.style.marginTop = 28 + need + "px";
   $view.querySelector("#reset").addEventListener("click", () => {
     if (confirm("ล้างความคืบหน้าทั้งหมดในเครื่องนี้? ย้อนกลับไม่ได้")) {
       const lvl = S.level, lng = S.lang, pc = S.passcode, pf = S.profile, ll = S.langLevel; S = defaultState(); S.level = lvl; S.lang = lng; S.passcode = pc; S.profile = pf; S.langLevel = ll; save(); go("home"); toast("ล้างข้อมูลการเรียนแล้ว");
