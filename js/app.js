@@ -92,7 +92,8 @@ function streak() {
 /* =========================================================
    เครื่องมือช่วย
    ========================================================= */
-const $view = document.getElementById("view");
+const MAIN_VIEW = document.getElementById("view");
+let $view = MAIN_VIEW; // แท็บที่มีแท็บย่อยจะชี้ไปที่กล่องเนื้อหาด้านใน
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const shuffle = (a) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
@@ -148,14 +149,18 @@ function listen({ onResult, onEnd, onError, lang = "en" }) {
    ========================================================= */
 let current = "home";
 let cleanup = null;
-const tabs = { home: renderHome, vocab: renderVocab, quiz: renderQuiz, speak: renderSpeak, tutor: renderTutor, profile: renderProfile, translate: renderTranslate };
+const tabs = { home: renderHome, vocab: renderPractice, quiz: renderQuiz, tutor: renderTutor, profile: renderProfile, translate: renderTranslate };
+const NAV_OF = { profile: "home" };
 
 function go(tab) {
+  // ลิงก์เก่า/ปุ่มลัด "speak" และ "write" ไปที่แท็บฝึกคำ แล้วเปิดแท็บย่อยนั้น
+  if (tab === "speak" || tab === "write" || tab === "cards") { S.pMode = tab; save(); tab = "vocab"; }
   if (cleanup) { cleanup(); cleanup = null; }
+  $view = MAIN_VIEW;
   if (window.speechSynthesis) speechSynthesis.cancel();
   if (current === "tutor" && tab !== "tutor") summarizeChat();
   current = tab;
-  document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === (tab === "profile" ? "home" : tab)));
+  document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === (NAV_OF[tab] || tab)));
   $view.classList.remove("has-composer", "tr-face");
   document.querySelector(".composer")?.remove();
   tabs[tab]();
@@ -244,9 +249,10 @@ function renderHome() {
 
     <h2>เริ่มเรียนเลย · <span class="muted" style="font-weight:500">${deckLabel()}</span></h2>
     <div class="quick">
-      <button data-go="vocab"><div class="qi">🃏</div><b>ทบทวนคำศัพท์</b><small>${due ? `ถึงรอบ ${due} คำ` : "ไม่มีคำค้าง"}</small></button>
+      <button data-go="cards"><div class="qi">🃏</div><b>ทบทวนคำศัพท์</b><small>${due ? `ถึงรอบ ${due} คำ` : "ไม่มีคำค้าง"}</small></button>
       <button data-go="quiz"><div class="qi">✅</div><b>ควิซ</b><small>ข้อละ +5 XP</small></button>
       <button data-go="speak"><div class="qi">🎤</div><b>ฝึกฟัง-พูด</b><small>ตรวจการออกเสียง</small></button>
+      <button data-go="write"><div class="qi">✍️</div><b>ฝึกเขียน</b><small>เขียนด้วยนิ้วหรือปากกา</small></button>
       <button data-go="tutor"><div class="qi">🤖</div><b>คุยกับครู AI</b><small>ฝึกสนทนาจริง</small></button>
     </div>
 
@@ -844,6 +850,212 @@ function renderProfile() {
 }
 
 /* =========================================================
+   ฝึกคำ: แท็บย่อย แฟลชการ์ด / ฟัง-พูด / เขียน
+   ========================================================= */
+function renderPractice() {
+  const mode = ["cards", "speak", "write"].includes(S.pMode) ? S.pMode : "cards";
+  MAIN_VIEW.innerHTML = `
+    <div class="seg subtabs">
+      <button data-pm="cards" class="${mode === "cards" ? "sel" : ""}">🃏 แฟลชการ์ด</button>
+      <button data-pm="speak" class="${mode === "speak" ? "sel" : ""}">🎤 ฟัง-พูด</button>
+      <button data-pm="write" class="${mode === "write" ? "sel" : ""}">✍️ เขียน</button>
+    </div>
+    <div id="sub"></div>`;
+  MAIN_VIEW.querySelectorAll("[data-pm]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.pm === mode) return;
+    S.pMode = b.dataset.pm; save(); go("vocab");
+  }));
+  $view = MAIN_VIEW.querySelector("#sub");
+  ({ cards: renderVocab, speak: renderSpeak, write: renderWrite })[mode]();
+}
+
+/* ---------- ✍️ เขียน: กระดานวาดด้วยนิ้ว/ปากกา + AI อ่านลายมือ ---------- */
+let writeIdx = null;
+function renderWrite() {
+  if (!S.wMode) S.wMode = "trace";
+  if (S.wGuide === undefined) S.wGuide = true;
+  const d = deck(), L = deckLang(d);
+  const words = deckVocab(d);
+  if (writeIdx === null || writeIdx >= words.length) writeIdx = Math.floor(Math.random() * words.length);
+  const w = words[writeIdx];
+  const trace = S.wMode === "trace";
+
+  $view.innerHTML = `
+    <div class="row" style="gap:6px;margin-bottom:10px">
+      <button class="chip ${trace ? "sel" : ""}" data-wm="trace">📝 ฝึกเขียนคำ</button>
+      <button class="chip ${!trace ? "sel" : ""}" data-wm="free">🎨 วาดอิสระ</button>
+      <span class="grow"></span>
+      ${trace ? `<button class="chip ${S.wGuide ? "sel" : ""}" id="guide">เส้นนำ ${S.wGuide ? "เปิด" : "ปิด"}</button>` : ""}
+    </div>
+    ${trace ? `
+      <div class="card row" style="margin-bottom:10px">
+        <div class="grow">
+          <div class="target-word">${esc(w.w)}</div>
+          ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
+          <div class="muted small">${esc(w.th)}</div>
+        </div>
+        <button class="icon-btn" id="sayW" aria-label="ฟังเสียง">🔊</button>
+      </div>` : `
+      <p class="sub" style="margin:0 0 10px">เขียนคำ (ภาษาไหนก็ได้) หรือวาดรูป แล้วกด "อ่าน/ทาย" AI จะบอกว่าเป็นคำอะไร ภาษา${LANG_META[L].name}พูดว่าอะไร</p>`}
+    <div class="board-wrap" id="wrap">
+      <div class="board-grid"></div>
+      ${trace && S.wGuide ? `<div class="board-ghost" id="ghost">${esc(w.w)}</div>` : ""}
+      <canvas id="board" aria-label="กระดานเขียน"></canvas>
+    </div>
+    <div class="tools">
+      <button class="icon-btn sel" data-tool="pen" aria-label="ปากกา">✏️</button>
+      <button class="icon-btn" data-tool="eraser" aria-label="ยางลบ">🧽</button>
+      <button class="icon-btn" id="undo" aria-label="ย้อนกลับ">↶</button>
+      <button class="icon-btn" id="clear" aria-label="ล้าง">🗑️</button>
+      <div class="size">
+        ${[3, 6, 10].map((sz, i) => `<button class="dot ${i === 1 ? "sel" : ""}" data-size="${sz}" aria-label="ขนาด ${sz}"><i style="width:${sz + 2}px;height:${sz + 2}px"></i></button>`).join("")}
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      ${trace ? `<button class="btn grow" id="nextW">คำถัดไป ▶</button>` : ""}
+      <button class="btn primary grow" id="check">${trace ? "✅ ตรวจลายมือ" : "🔍 อ่าน/ทาย"}</button>
+    </div>
+    <div id="wres" style="margin-top:12px"></div>`;
+
+  // ---- กระดาน ----
+  const canvas = $view.querySelector("#board");
+  const ctx = canvas.getContext("2d");
+  const strokes = []; // { tool, size, pts: [[x,y,pressure]] }
+  let tool = "pen", size = 6, cur = null;
+  const fit = () => {
+    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    redraw();
+  };
+  const ghost = $view.querySelector("#ghost");
+  if (ghost) {
+    const len = Array.from(w.w).length;
+    const wide = /[\u1100-\u11ff\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(w.w); // ตัวอักษรเอเชียกว้างกว่า
+    const px = Math.max(34, Math.min(150, Math.floor((canvas.parentElement.clientWidth * (wide ? 0.9 : 1.6)) / Math.max(1, len))));
+    ghost.style.fontSize = px + "px";
+  }
+  function drawStroke(s) {
+    ctx.save();
+    ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
+    ctx.strokeStyle = "#1c1b18"; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    const p = s.pts;
+    if (p.length === 1) {
+      ctx.beginPath(); ctx.arc(p[0][0], p[0][1], (s.size * (s.tool === "eraser" ? 3 : 1) * p[0][2]) / 2, 0, Math.PI * 2);
+      ctx.fillStyle = "#1c1b18"; ctx.fill();
+    }
+    for (let i = 1; i < p.length; i++) {
+      ctx.beginPath();
+      ctx.lineWidth = s.size * (s.tool === "eraser" ? 3 : 1) * ((p[i][2] + p[i - 1][2]) / 2);
+      ctx.moveTo(p[i - 1][0], p[i - 1][1]); ctx.lineTo(p[i][0], p[i][1]); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function redraw() { ctx.clearRect(0, 0, canvas.width, canvas.height); strokes.forEach(drawStroke); }
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    // ปากกา stylus: ใช้แรงกด ทำให้เส้นหนาบาง (นิ้ว/เมาส์ใช้ค่าคงที่)
+    const pr = e.pointerType === "pen" && e.pressure > 0 ? 0.4 + e.pressure * 1.2 : 1;
+    return [e.clientX - r.left, e.clientY - r.top, pr];
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    cur = { tool, size, pts: [pos(e)] };
+    strokes.push(cur); drawStroke(cur);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!cur) return;
+    e.preventDefault();
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of evs) cur.pts.push(pos(ev));
+    redraw();
+  });
+  const end = () => { cur = null; };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  requestAnimationFrame(fit);
+  const onResize = () => fit();
+  window.addEventListener("resize", onResize);
+  cleanup = () => window.removeEventListener("resize", onResize);
+
+  $view.querySelectorAll("[data-tool]").forEach((b) => b.addEventListener("click", () => {
+    tool = b.dataset.tool;
+    $view.querySelectorAll("[data-tool]").forEach((x) => x.classList.toggle("sel", x === b));
+  }));
+  $view.querySelectorAll("[data-size]").forEach((b) => b.addEventListener("click", () => {
+    size = +b.dataset.size;
+    $view.querySelectorAll("[data-size]").forEach((x) => x.classList.toggle("sel", x === b));
+  }));
+  $view.querySelector("#undo").addEventListener("click", () => { strokes.pop(); redraw(); });
+  $view.querySelector("#clear").addEventListener("click", () => { strokes.length = 0; redraw(); $view.querySelector("#wres").innerHTML = ""; });
+  $view.querySelectorAll("[data-wm]").forEach((b) => b.addEventListener("click", () => { S.wMode = b.dataset.wm; save(); renderWrite(); }));
+  $view.querySelector("#guide")?.addEventListener("click", () => { S.wGuide = !S.wGuide; save(); renderWrite(); });
+  $view.querySelector("#sayW")?.addEventListener("click", () => speak(w.w, 0.8, L));
+  $view.querySelector("#nextW")?.addEventListener("click", () => { writeIdx = (writeIdx + 1 + Math.floor(Math.random() * (words.length - 1))) % words.length; renderWrite(); });
+
+  // ภาพสำหรับส่งให้ AI: พื้นขาว เส้นดำ ย่อขนาดไม่เกิน 640px (ไม่รวมเส้นนำ)
+  function snapshot() {
+    const maxW = 640, sc = Math.min(1, maxW / canvas.width);
+    const out = document.createElement("canvas");
+    out.width = Math.round(canvas.width * sc); out.height = Math.round(canvas.height * sc);
+    const o = out.getContext("2d");
+    o.fillStyle = "#fff"; o.fillRect(0, 0, out.width, out.height);
+    o.drawImage(canvas, 0, 0, out.width, out.height);
+    return out.toDataURL("image/jpeg", 0.85);
+  }
+
+  const res = $view.querySelector("#wres");
+  const btn = $view.querySelector("#check");
+  btn.addEventListener("click", async () => {
+    if (!strokes.some((s) => s.tool === "pen")) { toast(trace ? "เขียนคำลงบนกระดานก่อนนะ" : "เขียนหรือวาดอะไรสักอย่างก่อนนะ"); return; }
+    btn.disabled = true;
+    res.innerHTML = `<div class="card center muted">AI กำลังอ่าน...</div>`;
+    try {
+      const data = await api(trace
+        ? { action: "handwriting", mode: "check", lang: L, target: w.w, image: snapshot() }
+        : { action: "handwriting", mode: "free", lang: L, image: snapshot() }, 60000);
+      if (!res.isConnected) return;
+      requestAnimationFrame(() => res.scrollIntoView({ behavior: "smooth", block: "center" }));
+      if (trace) {
+        const ok = data.correct;
+        addXP(ok ? 5 : 1);
+        res.innerHTML = `
+          <div class="card stack center">
+            <div class="verdict" style="color:${ok ? "var(--good)" : data.score >= 50 ? "var(--warn)" : "var(--bad)"}">${ok ? "✅" : "✏️"} ${Number(data.score) || 0}</div>
+            <div>AI อ่านได้ว่า: <b style="font-size:20px">${esc(data.recognized || "(อ่านไม่ออก)")}</b></div>
+            ${data.feedback_th ? `<div class="explain" style="text-align:left">${esc(data.feedback_th)}</div>` : ""}
+          </div>`;
+      } else {
+        addXP(1);
+        res.innerHTML = `
+          <div class="card stack">
+            <div class="muted small">${data.kind === "drawing" ? "🎨 ดูเหมือนรูป" : "📝 อ่านได้ว่า"}: <b>${esc(data.recognized || "-")}</b></div>
+            ${data.word ? `
+              <div class="row">
+                <div class="grow">
+                  <div class="dict-word">${esc(data.word)}</div>
+                  ${data.reading ? `<div class="reading">${esc(data.reading)}</div>` : ""}
+                  ${data.thai_sound ? `<div class="small">อ่านว่า <b>${esc(data.thai_sound)}</b></div>` : ""}
+                </div>
+                <button class="icon-btn" id="sayRes" aria-label="ฟังเสียง">🔊</button>
+              </div>` : ""}
+            ${data.meaning_th ? `<div><b style="font-size:18px">${esc(data.meaning_th)}</b></div>` : ""}
+            ${data.note_th ? `<div class="explain">💡 ${esc(data.note_th)}</div>` : ""}
+          </div>`;
+        res.querySelector("#sayRes")?.addEventListener("click", () => speak(data.word, 0.8, L));
+        if (data.word) speak(data.word, 0.8, L);
+      }
+    } catch (e) {
+      if (res.isConnected) res.innerHTML = "";
+      toast(e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+/* =========================================================
    7) แปลภาษา (คุยต่อหน้า / พิมพ์)
    ========================================================= */
 let trLog = [];       // { from: "th"|partner, src, dst, reading }
@@ -1088,4 +1300,4 @@ function renderTranslateSoft() { if (cleanup) { cleanup(); cleanup = null; } ren
    ========================================================= */
 renderLevelChip();
 const start = location.hash.slice(1);
-go(tabs[start] ? start : "home");
+go(tabs[start] || ["speak", "write", "cards"].includes(start) ? start : "home");

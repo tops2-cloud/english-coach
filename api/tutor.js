@@ -138,6 +138,28 @@ function lookupSystem(partner) {
   ].join("\n");
 }
 
+function handwritingSystem(lang, mode, target) {
+  const L = langName(lang);
+  const reading = (LANGS[lang] || {}).reading || (lang === "en" ? "IPA in slashes" : "");
+  if (mode === "check") {
+    return [
+      `You check handwriting practice for a Thai learner of ${L}. The image is a white canvas with the learner's handwriting (finger or stylus, so it may be rough).`,
+      `The learner was trying to write: "${target}".`,
+      "Read exactly what is written; do not auto-correct it to the target. Judge whether a native reader would read it as the target, and how well-formed the letters/characters are (stroke shapes, missing or extra parts, spacing). Be fair to finger-drawn writing.",
+      "Return ONLY a JSON object, no code fence:",
+      '{"recognized": "<what is actually written, or empty string if unreadable>", "correct": true/false, "score": <0-100>, "feedback_th": "<1-2 short, encouraging sentences in Thai: what looks good, which letter/character or stroke to fix and how>"}',
+    ].join("\n");
+  }
+  return [
+    `The image is drawn by a Thai learner of ${L} with a finger or stylus on a white canvas. It is either handwritten text (in any language) or a simple drawing.`,
+    "If it is text: transcribe it. If it is a drawing: make your best guess of the main thing it shows (a common object, animal, food, place, etc.).",
+    `Then give the ${L} word or phrase for it (for text already in ${L}, the same text), with reading, a Thai-letter pronunciation guide and the Thai meaning.`,
+    "Return ONLY a JSON object, no code fence:",
+    `{"kind": "text" | "drawing", "recognized": "<transcribed text, or what the drawing shows, in Thai>", "word": "<the ${L} word/phrase>", "reading": "<${reading || "empty string"}>", "thai_sound": "<pronunciation in Thai letters with hyphens, e.g. แค็ท>", "meaning_th": "<Thai meaning>", "note_th": "<optional short Thai tip, e.g. other possible guesses or a usage note; or empty string>"}`,
+    "If the image is blank or impossible to read, set recognized to empty string and explain kindly in note_th. Keep everything suitable for all ages.",
+  ].join("\n");
+}
+
 function parseJSON(text) {
   const s = String(text || "");
   const a = s.indexOf("{"), b = s.lastIndexOf("}");
@@ -183,7 +205,9 @@ async function askClaude(system, msgs, { maxTokens = 500 } = {}) {
       model: process.env.ANTHROPIC_MODEL || "claude-haiku-5-5",
       max_tokens: maxTokens,
       system,
-      messages: msgs,
+      messages: msgs.map((m) => m.image
+        ? { role: m.role, content: [{ type: "image", source: { type: "base64", media_type: m.image.mime, data: m.image.data } }, { type: "text", text: m.content }] }
+        : m),
     }),
     signal: AbortSignal.timeout(25000),
   });
@@ -200,7 +224,10 @@ async function geminiCall(model, system, msgs, json) {
     headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
-      contents: msgs.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+      contents: msgs.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: m.image ? [{ inlineData: { mimeType: m.image.mime, data: m.image.data } }, { text: m.content }] : [{ text: m.content }],
+      })),
       generationConfig,
     }),
     signal: AbortSignal.timeout(25000),
@@ -289,6 +316,30 @@ export default async function handler(req, res) {
         examples: (Array.isArray(e.examples) ? e.examples : []).slice(0, 3).map((x) => ({ text: str(x.text, 200), reading: str(x.reading, 240), th: str(x.th, 200) })).filter((x) => x.text),
       })).filter((e) => e.word);
       return res.status(200).json({ query: text, partner, direction: j.direction === "from_th" ? "from_th" : "to_th", entries, note_th: str(j.note_th, 300) });
+    }
+
+    // ---------- อ่านลายมือ / ทายรูปวาด ----------
+    if (action === "handwriting") {
+      const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(body.image || ""));
+      if (!m) return res.status(400).json({ error: "ไม่มีภาพลายมือ" });
+      if (m[2].length > 2_000_000) return res.status(413).json({ error: "ภาพใหญ่เกินไป" });
+      const mode = body.mode === "check" ? "check" : "free";
+      const target = String(body.target || "").trim().slice(0, 80);
+      if (mode === "check" && !target) return res.status(400).json({ error: "ไม่มีคำที่ต้องเขียน" });
+      const out = await ask(provider, handwritingSystem(lang, mode, target),
+        [{ role: "user", content: mode === "check" ? "Check this handwriting." : "What is this?", image: { mime: m[1], data: m[2] } }],
+        { json: true, maxTokens: 600 });
+      const j = parseJSON(out);
+      if (!j) return res.status(502).json({ error: "AI อ่านภาพไม่สำเร็จ ลองใหม่อีกครั้ง" });
+      const str = (v, n) => String(v || "").trim().slice(0, n);
+      if (mode === "check") {
+        const score = Math.max(0, Math.min(100, Math.round(Number(j.score) || 0)));
+        return res.status(200).json({ recognized: str(j.recognized, 120), correct: !!j.correct, score, feedback_th: str(j.feedback_th, 300) });
+      }
+      return res.status(200).json({
+        kind: j.kind === "drawing" ? "drawing" : "text", recognized: str(j.recognized, 120), word: str(j.word, 120),
+        reading: str(j.reading, 160), thai_sound: str(j.thai_sound, 120), meaning_th: str(j.meaning_th, 200), note_th: str(j.note_th, 300),
+      });
     }
 
     // ---------- สรุปความจำของครู ----------
