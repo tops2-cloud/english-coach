@@ -871,26 +871,62 @@ function renderPractice() {
 
 /* ---------- ✍️ เขียน: กระดานวาดด้วยนิ้ว/ปากกา + AI อ่านลายมือ ---------- */
 let writeIdx = null;
+// ฟอนต์ลายมือ (ตัวเขียน) ของแต่ละภาษา จาก Google Fonts
+// อังกฤษ/เวียดนาม: ตระกูล Playwrite ที่ออกแบบมาสอนเขียนตัวติดในโรงเรียน, ภาษาเอเชีย: ฟอนต์ลายมือของภาษานั้น
+const HAND_FONT = {
+  en: { family: "Playwrite US Trad", note: "ตัวเขียนติดแบบที่สอนในโรงเรียนอเมริกา" },
+  vi: { family: "Playwrite VN", note: "ตัวเขียนตามแบบลายมือทางการของเวียดนาม" },
+  ko: { family: "Nanum Pen Script", note: "ลายมือเขียนด้วยปากกา", subset: true },
+  ja: { family: "Klee One", note: "ลายมือแบบตำราเรียน เห็นเส้นขีดชัด", subset: true },
+  zh: { family: "Ma Shan Zheng", note: "ตัวเขียนแบบพู่กันคาย (楷书)", subset: true },
+};
+const _fontLinks = new Map();
+function loadHandFont(lang, text) {
+  const f = HAND_FONT[lang];
+  if (!f) return Promise.resolve();
+  // ภาษาเอเชียฟอนต์ใหญ่มาก จึงโหลดเฉพาะตัวอักษรที่ใช้ (text=)
+  const url = "https://fonts.googleapis.com/css2?family=" + f.family.replace(/ /g, "+") + "&display=swap" + (f.subset ? "&text=" + encodeURIComponent(text) : "");
+  let p = _fontLinks.get(url);
+  if (!p) {
+    p = new Promise((res) => {
+      const l = document.createElement("link");
+      l.rel = "stylesheet"; l.href = url; l.onload = res; l.onerror = res;
+      document.head.appendChild(l);
+    });
+    _fontLinks.set(url, p);
+  }
+  // รอให้ฟอนต์โหลด (ไม่เกิน 4 วินาที ถ้าเน็ตช้าจะแสดงฟอนต์สำรองไปก่อน)
+  return Promise.race([
+    new Promise((r) => setTimeout(r, 4000)),
+    p.then(() => document.fonts.load(`40px "${f.family}"`, text)).catch(() => {}),
+  ]);
+}
+
 function renderWrite() {
   if (!S.wMode) S.wMode = "trace";
-  if (S.wGuide === undefined) S.wGuide = true;
+  // เส้นนำ: "print" ตัวพิมพ์, "hand" ตัวเขียน, "off" ปิด (เวอร์ชันเก่าเก็บเป็น true/false)
+  if (S.wGuide === undefined || S.wGuide === true) S.wGuide = "print";
+  if (S.wGuide === false) S.wGuide = "off";
   const d = deck(), L = deckLang(d);
   const words = deckVocab(d);
   if (writeIdx === null || writeIdx >= words.length) writeIdx = Math.floor(Math.random() * words.length);
   const w = words[writeIdx];
   const trace = S.wMode === "trace";
+  const HF = HAND_FONT[L];
+  const GUIDE_NAME = { print: "ตัวพิมพ์", hand: "ตัวเขียน", off: "ปิด" };
 
   $view.innerHTML = `
     <div class="row" style="gap:6px;margin-bottom:10px">
       <button class="chip ${trace ? "sel" : ""}" data-wm="trace">📝 ฝึกเขียนคำ</button>
       <button class="chip ${!trace ? "sel" : ""}" data-wm="free">🎨 วาดอิสระ</button>
       <span class="grow"></span>
-      ${trace ? `<button class="chip ${S.wGuide ? "sel" : ""}" id="guide">เส้นนำ ${S.wGuide ? "เปิด" : "ปิด"}</button>` : ""}
+      ${trace ? `<button class="chip ${S.wGuide !== "off" ? "sel" : ""}" id="guide" aria-label="เปลี่ยนเส้นนำ">เส้นนำ: ${GUIDE_NAME[S.wGuide]}</button>` : ""}
     </div>
     ${trace ? `
       <div class="card row" style="margin-bottom:10px;padding:10px 14px">
         <div class="grow">
           <div class="target-word">${esc(w.w)}</div>
+          ${HF ? `<div class="hand-word" title="${HF.note}"><span class="muted small">ตัวเขียน </span><span style="font-family:'${HF.family}',cursive">${esc(w.w)}</span></div>` : ""}
           ${w.r ? `<div class="reading">${esc(w.r)}</div>` : ""}
           <div class="muted small">${esc(w.th)}</div>
         </div>
@@ -898,7 +934,7 @@ function renderWrite() {
       </div>` : ""}
     <div class="board-wrap" id="wrap">
       <div class="board-grid"></div>
-      ${trace && S.wGuide ? `<div class="board-ghost" id="ghost">${esc(w.w)}</div>` : ""}
+      ${trace && S.wGuide !== "off" ? `<div class="board-ghost" id="ghost" ${S.wGuide === "hand" && HF ? `style="font-family:'${HF.family}',cursive;font-weight:400"` : ""}>${esc(w.w)}</div>` : ""}
       <canvas id="board" aria-label="กระดานเขียน"></canvas>
     </div>
     <div class="tools" id="tools">
@@ -931,14 +967,24 @@ function renderWrite() {
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     redraw();
+    sizeGhost();
   };
+  // ขนาดเส้นนำ: วัดความกว้างจริงของคำด้วยฟอนต์ที่ใช้ แล้วขยายให้เต็มกระดานพอดี
   const ghost = $view.querySelector("#ghost");
-  if (ghost) {
-    const len = Array.from(w.w).length;
-    const wide = /[\u1100-\u11ff\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(w.w); // ตัวอักษรเอเชียกว้างกว่า
-    const px = Math.max(34, Math.min(150, Math.floor((canvas.parentElement.clientWidth * (wide ? 0.9 : 1.6)) / Math.max(1, len))));
-    ghost.style.fontSize = px + "px";
+  const meter = document.createElement("canvas").getContext("2d");
+  function sizeGhost() {
+    if (!ghost) return;
+    const W = canvas.clientWidth - 28, H = canvas.clientHeight || 300;
+    const cs = getComputedStyle(ghost);
+    meter.font = `${cs.fontWeight} 100px ${cs.fontFamily}`;
+    const at100 = Math.max(1, meter.measureText(w.w).width);
+    const cursive = S.wGuide === "hand";
+    const px = Math.floor(Math.min(150, H * (cursive ? 0.5 : 0.62), (W / at100) * 100));
+    ghost.style.fontSize = Math.max(26, px) + "px";
+    ghost.style.lineHeight = cursive ? "1.6" : "1.1";
   }
+  // โหลดฟอนต์ตัวเขียน (สำหรับการ์ดคำ และเส้นนำแบบตัวเขียน) แล้วคำนวณขนาดใหม่
+  if (trace && HF) loadHandFont(L, w.w).then(() => { if (canvas.isConnected) sizeGhost(); });
   function drawStroke(s) {
     ctx.save();
     ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
@@ -994,7 +1040,10 @@ function renderWrite() {
   $view.querySelector("#undo").addEventListener("click", () => { strokes.pop(); redraw(); });
   $view.querySelector("#clear").addEventListener("click", () => { strokes.length = 0; redraw(); $view.querySelector("#wres").innerHTML = ""; });
   $view.querySelectorAll("[data-wm]").forEach((b) => b.addEventListener("click", () => { S.wMode = b.dataset.wm; save(); renderWrite(); }));
-  $view.querySelector("#guide")?.addEventListener("click", () => { S.wGuide = !S.wGuide; save(); renderWrite(); });
+  $view.querySelector("#guide")?.addEventListener("click", () => {
+    S.wGuide = { print: HF ? "hand" : "off", hand: "off", off: "print" }[S.wGuide] || "print";
+    save(); renderWrite();
+  });
   $view.querySelector("#sayW")?.addEventListener("click", () => speak(w.w, 0.8, L));
   $view.querySelector("#nextW")?.addEventListener("click", () => { writeIdx = (writeIdx + 1 + Math.floor(Math.random() * (words.length - 1))) % words.length; renderWrite(); });
 

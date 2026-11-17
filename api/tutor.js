@@ -145,6 +145,7 @@ function handwritingSystem(lang, mode, target) {
     return [
       `You check handwriting practice for a Thai learner of ${L}. The image is a white canvas with the learner's handwriting (finger or stylus, so it may be rough).`,
       `The learner was trying to write: "${target}".`,
+      "The learner may write in print style or in joined cursive (school handwriting); accept either style.",
       "Read exactly what is written; do not auto-correct it to the target. Judge whether a native reader would read it as the target, and how well-formed the letters/characters are (stroke shapes, missing or extra parts, spacing). Be fair to finger-drawn writing.",
       "Return ONLY a JSON object, no code fence:",
       '{"recognized": "<what is actually written, or empty string if unreadable>", "correct": true/false, "score": <0-100>, "feedback_th": "<1-2 short, encouraging sentences in Thai: what looks good, which letter/character or stroke to fix and how>"}',
